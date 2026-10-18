@@ -122,6 +122,10 @@ public:
     const u32* GetAttrLine(int line) noexcept;
 
     void WriteToGXFIFO(u32 val) noexcept;
+    // Native ingress supplies predecoded packed words; effects still enter
+    // the ordinary FIFO and execute through the unchanged geometry engine.
+    static const u8* CommandParamCounts() noexcept;
+    void WriteDecodedGXFIFO(u32 value, const u8* commands, u32 count) noexcept;
 
     [[nodiscard]] bool IsRendererAccelerated() const noexcept;
     [[nodiscard]] Renderer3D& GetCurrentRenderer() noexcept { return *CurrentRenderer; }

@@ -4,7 +4,10 @@ For HLE measurements, `run_vblanks count=600` advances equal simulated work
 without arming per-instruction hooks (serve mode only, count 1..6000). It reports
 actual VBlanks and terminal state; incomplete progress is not a valid sample.
 `mph_submit` reports the build-selected submission profile and monotonic service
-counters. Neither command changes the HLE/LLE implementation. See
+counters. V2's `chunks` counts equivalent retail chunks and `dma_batches` counts
+actual native transactions. Nested `command_cache` counters reset on device
+reset/state load; `reused_words` is the offered cached slice budget, which FIFO
+stall may truncate. Neither command changes the HLE/LLE implementation. See
 [`docs/mph-submit-hle.md`](docs/mph-submit-hle.md) for its contract and evidence.
 
 ## Always-on rings, never arm-then-capture

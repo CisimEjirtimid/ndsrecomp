@@ -130,12 +130,13 @@ void submit() {
         g_cpu.R[9] = source;
         g_cpu.R[10] = channel;
         g_cpu.R[7] = dma_base + channel * 12u + 8u;
+        g_cpu.R[6] = 0; // no owned batch awaiting final register publication
         if (boundary(wait_before, 48)) return;
     }
 
     for (;;) {
-        // Both wait points observe the real DMA status. Resume PCs are original
-        // validated dispatch entries; original LLE frames can also enter here.
+        // Both wait points observe the real DMA status. Resume PCs are validated
+        // dispatch entries with this build's own guest-register continuation.
         if (g_cpu.R[15] == wait_before || g_cpu.R[15] == wait_after) {
             const uint32_t pc = g_cpu.R[15];
             if (nds_io_read(g_cpu.R[7], 4) & 0x80000000u) {
@@ -148,20 +149,34 @@ void submit() {
                 if (boundary(pc, static_cast<uint32_t>(std::min(left, uint64_t{128})))) return;
                 continue;
             }
-            if (pc == wait_after) { completed(); return; }
+            if (pc == wait_after) {
+                // Expose the last retail 118-word chunk's completed channel
+                // registers, without replaying its data or arming another DMA.
+                program(g_cpu.R[10], g_cpu.R[5], 0x04000400u, g_cpu.R[4]);
+                completed(); return;
+            }
             g_cpu.R[15] = next_chunk;
         }
         if (g_cpu.R[15] != next_chunk) {
             nds_halt("MPH HLE: invalid submission continuation"); return;
         }
-        const uint32_t bytes = std::min(g_cpu.R[8], 472u);
+        if (g_cpu.R[6]) {
+            program(g_cpu.R[10], g_cpu.R[5], 0x04000400u, g_cpu.R[4]);
+            g_cpu.R[6] = 0;
+        }
+        // One contiguous native DMA owns many retail chunk services. Bound
+        // very large buffers to a multiple of 118 below the 16-bit burst
+        // index wrap; this also keeps all DMA count fields representable.
+        const uint32_t bytes = std::min(g_cpu.R[8], 472u * 128u);
         if (!bytes) { completed(); return; }
-        g_cpu.R[4] = 0x84400000u;
-        g_cpu.R[5] = 472u;
+        const uint32_t last_bytes = ((bytes - 4u) % 472u) + 4u;
+        g_cpu.R[4] = 0x04400000u | (last_bytes >> 2u);
+        g_cpu.R[5] = g_cpu.R[9] + bytes - last_bytes;
         g_cpu.R[6] = bytes;
         g_cpu.R[11] = 0x04000400u;
         program(g_cpu.R[10], g_cpu.R[9], g_cpu.R[11], 0x84400000u | (bytes >> 2u));
-        ++counts.chunks;
+        counts.chunks += (bytes + 471u) / 472u;
+        ++counts.dma_batches;
         counts.bytes += bytes;
         g_cpu.R[8] -= bytes;
         g_cpu.R[9] += bytes;

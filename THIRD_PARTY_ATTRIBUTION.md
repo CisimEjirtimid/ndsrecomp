@@ -25,7 +25,8 @@ boundary must keep a GPL-compatible license. The shared
 repositories under their own terms, and are MIT for the same reason.
 
 A third group of files is neither: `runner/vendor/melonds/`,
-`runner/src/melonds_compute/`, `runner/src/frontend.cpp`, and `oracle/patches/`
+`runner/src/melonds_compute/`, `runner/src/frontend.cpp`,
+`runner/tests/gx_command_batch_test.cpp`, and `oracle/patches/`
 are derivative works of melonDS and are under **GPL-3.0-or-later**, with the
 license text in [`LICENSE-GPL`](LICENSE-GPL). That includes the
 project-written shim headers and interface slices inside them, which reproduce
@@ -100,7 +101,8 @@ remains a device model, not HLE).
   (patch `0009`, host-only adaptive render width plus the attribute
   surface and a soft-renderer thread-restart fix; `GPU3D.cpp`/`GPU3D.h`
   additionally patch `0016`, the opt-in guest-wide-projection viewport
-  mode), and
+  mode, and patch `0020`, decoded GXFIFO ingress alongside the unchanged
+  reference packed-word parser), and
   `GPU3D_Compute.cpp`, `GPU3D_Compute.h`, `GPU3D_Compute_shaders.h`
   (patch `0010`, adaptive width, polygon-ID attributes in the low
   resolution surface, and the internal-resolution accessors; patch `0014`,
@@ -121,6 +123,11 @@ remains a device model, not HLE).
   minimal interface slice the vendored units consume; as derived interfaces
   they are likewise GPL-3.0-or-later. The bridge `runner/src/gpu3d.cpp`
   implements them against the runner's own device models.
+- `GPU3D_CommandBatch.h` adapts the packed-word protocol from the same pinned
+  `GPU3D::WriteToGXFIFO` into a bounded, generation-checked decoded-command
+  cache. It is GPL-3.0-or-later with the melonDS copyright retained. It caches
+  no matrix/geometry results and changes no renderer arithmetic. The legacy
+  parser is retained and used directly by the differential test.
 - Project-written compute adapters under `runner/src/melonds_compute/`
   provide the host GL-context owner, the `GLCompositor` interface slice, and
   the `Platform` file-service slice consumed by the byte-identical upstream

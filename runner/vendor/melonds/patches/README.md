@@ -449,3 +449,14 @@ activity are deliberately not used as connection proxies.
 Together with the runner bridge marking a peer only after receipt of a
 validated local datagram, this gives the save-state guard an explicit peer
 start/end lifecycle without treating UDP `sendto()` success as a connection.
+
+## 0020-gpu3d-decoded-command-ingress.patch
+
+2026-10-18: `GPU3D.cpp/.h` add a decoded-word FIFO entry point and expose the
+existing command parameter-count table. The original `WriteToGXFIFO` remains
+unchanged and is the differential reference. The separate GPL-covered
+`GPU3D_CommandBatch.h` adapts that parser into a bounded source-generation and
+decoder-context cache. It caches decoded command identities, not geometry or
+rendering results. Matrix/test busy flags, FIFO/stall handling and the geometry
+executor continue through `CmdFIFOWrite` and `Run`. The runner uses the adapter
+only in the build-selected MPH submission HLE configuration.

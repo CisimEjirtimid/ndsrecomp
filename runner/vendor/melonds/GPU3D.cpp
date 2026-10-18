@@ -2753,6 +2753,19 @@ void GPU3D::WriteToGXFIFO(u32 val) noexcept
     }
 }
 
+const u8* GPU3D::CommandParamCounts() noexcept { return CmdNumParams; }
+
+void GPU3D::WriteDecodedGXFIFO(u32 value, const u8* commands, u32 count) noexcept
+{
+    for (u32 i = 0; i < count; ++i)
+    {
+        CmdFIFOEntry entry;
+        entry.Command = commands[i];
+        entry.Param = value;
+        CmdFIFOWrite(entry);
+    }
+}
+
 
 u8 GPU3D::Read8(u32 addr) noexcept
 {

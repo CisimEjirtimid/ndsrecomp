@@ -101,6 +101,11 @@ void nds_gpu3d_debug_history_reset();
 bool nds_gpu3d_reg_addr(uint32_t addr);
 uint32_t nds_gpu3d_read(uint32_t addr, uint32_t width);
 void nds_gpu3d_write(uint32_t addr, uint32_t value, uint32_t width);
+// Build-selected MPH geometry stream: one page-bounded scheduler slice of
+// contiguous Main RAM. Returns consumed words, stopping on real FIFO stall.
+uint32_t nds_gpu3d_command_batch(uint32_t source, uint32_t words,
+                               uint32_t offset, uint32_t count, bool stop_on_stall);
+const char* nds_gpu3d_command_batch_json();
 
 // POWCNT1 (ARM9 0x04000304): bit3 enables the geometry engine, bit2 the
 // rendering engine, matching melonDS GPU::SetPowerCnt.

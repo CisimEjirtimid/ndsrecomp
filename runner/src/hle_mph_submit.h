@@ -11,7 +11,7 @@ struct Replacement {
 };
 struct Statistics {
     bool rom_supported;
-    uint64_t setup_calls, submit_calls, chunks, bytes, waits, completions;
+    uint64_t setup_calls, submit_calls, chunks, bytes, waits, completions, dma_batches;
 };
 bool initialize(const char* rom_sha1);
 Statistics statistics();

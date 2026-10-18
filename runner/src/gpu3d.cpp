@@ -28,6 +28,9 @@
 
 #include "NDS.h"
 #include "GPU3D_Soft.h"
+#if defined(NDS_MPH_SUBMIT_HLE)
+#include "GPU3D_CommandBatch.h"
+#endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 #include "GPU3D_Compute.h"
 #include "ComputeHost.h"
@@ -36,6 +39,9 @@
 namespace {
 
 melonDS::NDS g_nds;
+#if defined(NDS_MPH_SUBMIT_HLE)
+melonDS::CommandBatch::Cache g_command_cache;
+#endif
 
 int g_log_budget = 64;
 bool g_soft_threaded = false;
@@ -1001,6 +1007,9 @@ bool gpu3d_savestate_validate(const NdsGpu3dSaveState& in,
 bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
                             std::string* error) {
     if (!gpu3d_savestate_validate(in, error)) return false;
+#if defined(NDS_MPH_SUBMIT_HLE)
+    g_command_cache.clear(); // restored RAM can reuse old generation numbers
+#endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     if (g_compute_readback_pending) compute_finish_readback();
     if (g_nds.GPU.GPU3D.IsRendererAccelerated()) glFinish();
@@ -1054,6 +1063,9 @@ bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
 }
 
 void nds_gpu3d_reset() {
+#if defined(NDS_MPH_SUBMIT_HLE)
+    g_command_cache.clear();
+#endif
     g_nds.ARM9Timestamp = 0;
     g_nds.GPU.GPU3D.Reset();
     // Match the retail/melonDS POWCNT1 reset value 0x820F.
@@ -1116,6 +1128,51 @@ void nds_gpu3d_write(uint32_t addr, uint32_t value, uint32_t width) {
     }
     e.gxstat_after = g3.GXStat;
     e.pipe_after = g3.CmdPIPE.Level();
+}
+
+uint32_t nds_gpu3d_command_batch(uint32_t source, uint32_t words,
+                               uint32_t offset, uint32_t count, bool stop_on_stall) {
+#if defined(NDS_MPH_SUBMIT_HLE)
+    using namespace melonDS::CommandBatch;
+    if (!count) return 0;
+    auto& gpu = g_nds.GPU.GPU3D;
+    g_nds.ARM9Timestamp = g_runtime_cycles;
+    if (!gpu.GeometryEnabled) return count;
+    const uint32_t base = source & g_busf_main.mask;
+    State live{gpu.CurCommand, gpu.NumCommands, gpu.ParamCount, gpu.TotalParams};
+    const Word* cached = g_command_cache.get(base, words, offset, count,
+        g_busf_main.data, g_busf_main.gen, live, gpu.CommandParamCounts());
+    uint32_t consumed = 0;
+    do {
+        const uint32_t value = load(g_busf_main.data + base + (offset + consumed) * 4u);
+        const Word decoded = cached ? cached[consumed] : decode(live, value, gpu.CommandParamCounts());
+        gpu.WriteDecodedGXFIFO(value, decoded.commands.data(), decoded.count);
+        live = decoded.after;
+        ++consumed;
+        if (stop_on_stall && nds_gxfifo_stalled()) break;
+    } while (consumed < count);
+    gpu.CurCommand = live.command; gpu.NumCommands = live.count;
+    gpu.ParamCount = live.param; gpu.TotalParams = live.total;
+    return consumed;
+#else
+    (void)source; (void)words; (void)offset; (void)count; (void)stop_on_stall;
+    return 0;
+#endif
+}
+
+const char* nds_gpu3d_command_batch_json() {
+#if defined(NDS_MPH_SUBMIT_HLE)
+    static char text[256];
+    const auto c = g_command_cache.statistics;
+    std::snprintf(text, sizeof(text),
+        "{\"hits\":%llu,\"builds\":%llu,\"invalidations\":%llu,\"decoded_words\":%llu,\"reused_words\":%llu}",
+        (unsigned long long)c.hits, (unsigned long long)c.builds,
+        (unsigned long long)c.invalidations, (unsigned long long)c.decoded_words,
+        (unsigned long long)c.reused_words);
+    return text;
+#else
+    return "{}";
+#endif
 }
 
 void nds_gpu3d_set_power(uint16_t powcnt1) {

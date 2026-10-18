@@ -64,7 +64,7 @@ if(NOT NDS_MKDS_IMPLEMENTATION MATCHES "^(LLE|HLE)$")
 endif()
 set(NDS_BUILD_VARIANT "")
 if(NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
-    set(NDS_BUILD_VARIANT "mph-submit-hle-v1")
+    set(NDS_BUILD_VARIANT "mph-submit-hle-v2")
 endif()
 if(NDS_MKDS_IMPLEMENTATION STREQUAL "HLE")
     if(NDS_BUILD_VARIANT)
@@ -498,7 +498,7 @@ message(STATUS "MPH math implementation: ${NDS_MPH_MATH_IMPLEMENTATION}")
 if(NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
     target_sources(nds_runner PRIVATE src/hle_mph_submit.cpp)
     # Do not invalidate/recompile ROM-derived banks for a runner-only service.
-    set_property(SOURCE src/main.cpp src/runtime_arm.cpp src/debug_server.cpp
+    set_property(SOURCE src/main.cpp src/runtime_arm.cpp src/debug_server.cpp src/io.cpp src/gpu3d.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS
         "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,nds_runner>:NDS_MPH_SUBMIT_HLE=1>")
 endif()
@@ -860,6 +860,11 @@ ndsrecomp_link_tomlpp(frontend_config_test)
       ${CMAKE_CURRENT_SOURCE_DIR}/../recompiler/armv4t ${NDS_ARM_RECOMP_INCLUDE_DIRS})
   target_link_libraries(hle_mph_submit_test PRIVATE nds_support)
   add_test(NAME hle_mph_submit_test COMMAND hle_mph_submit_test)
+
+  add_executable(gx_command_batch_test tests/gx_command_batch_test.cpp
+      vendor/melonds/GPU3D.cpp vendor/melonds/GPU3D_Soft.cpp vendor/melonds/Savestate.cpp)
+  target_include_directories(gx_command_batch_test PRIVATE vendor/melonds)
+  add_test(NAME gx_command_batch_test COMMAND gx_command_batch_test)
 
   add_executable(hle_mkds_test tests/hle_mkds_test.cpp src/hle_mkds.cpp)
   target_compile_definitions(hle_mkds_test PRIVATE NDS_RUNTIME_ABI_SHIMS=1)

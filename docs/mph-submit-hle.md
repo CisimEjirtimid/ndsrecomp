@@ -13,9 +13,9 @@ be summed into a promised speedup. The earlier shared geometry-poll service
 The selected family combines `0x01FF9420` DMA setup and `0x01FF9470`
 synchronous geometry submission, including its polling continuations. Native
 code replaces nested IRQ-wrapper calls, stack traffic, instruction dispatch,
-472-byte chunk construction and per-instruction polling. Actual DMA movement
-and geometry consumption remain scheduled devices. This is deliberately a
-larger boundary than a faster arithmetic leaf or an idle geometry poll.
+472-byte chunk construction and per-instruction polling. Version 2 additionally
+coalesces transactions and joins Main RAM to cached decoded-command ingress.
+Actual movement/completion and geometry consumption remain scheduled devices.
 
 ## Donor implementation assessment
 
@@ -61,7 +61,8 @@ Reviewed emulator source, with no copied implementation in this candidate:
 
 `NDS_MPH_SUBMIT_IMPLEMENTATION=LLE|HLE` is a developer build choice, independent
 of the existing vector selector. Generic default: LLE. HLE records
-`mph-submit-hle-v1` in build/save identity and startup diagnostics. The
+`mph-submit-hle-v2` in build/save identity and startup diagnostics (`v1` was the
+initial wrapper-only candidate). The
 read-only `mph_submit` debug command reports scope and execution counters.
 There is no runtime selector or promise of HLE/LLE cross-build state portability.
 
@@ -80,7 +81,7 @@ r0 channel 0..3, r1 word-aligned ordinary main-RAM command buffer, r2 byte size
 main-RAM address window. Unsupported inputs stop explicitly rather than return
 success. Other ROMs or changed resident code execute their existing native path.
 
-Submission retains the original callee-saved register/return frame in guest
+The initial **v1** submission retains the original callee-saved register/return frame in guest
 memory and uses original dispatch continuation addresses. It waits for a prior
 transfer, submits at most 472 bytes per transaction, and returns only after the
 real DMA enable bit clears. Source bytes are read by DMA at consumption time;
@@ -258,6 +259,99 @@ processes were stopped after collection. The server's Nextcloud, PostgreSQL and
 SSH services remain running. LLE remains the supported default; Wiimmfi and
 practical owner playtest qualification remain open.
 
+## Version 2: contiguous submission and decoded-command reuse
+
+The owner authorized widening the operation after the modest v1 result. V2
+coalesces up to 128 retail chunks into each contiguous native DMA (60,416
+bytes maximum, a multiple of 472 below the burst-index wrap). It retains the
+same guarded service entries, argument scope, guest frame, ARM/Thumb return,
+and wait for prior DMA. The completed channel publishes the final retail
+chunk's source/destination/control registers without transferring its bytes
+again. Continuations belong to this build; no live LLE/HLE handoff is promised.
+
+For eligible aligned Main-RAM-to-GXFIFO transfers, the HLE build joins RAM
+directly to decoded FIFO ingress. It avoids the generic bus/MMIO dispatch and
+per-word write-trace ring, calculates the existing Main RAM burst costs in
+page-bounded scheduler slices, preserves request limits and channel priority,
+and stops at actual FIFO backpressure. Channel 0 also stops at the first stall
+instead of continuing to feed a bounded overflow queue. The ordinary transfer
+loop handles other regions, widths, addressing modes, TCM overlaps and mirror
+crossings. The maintained LLE build uses its existing transfer/parser route.
+
+The bounded (~7 MiB payload) decoded-command cache keys physical source, length
+and the live packed-command continuation. It checks source page generations
+at each slice; a changed page requires checking its actual bytes. A mutation
+or decoder-context mismatch rebuilds from the current live position. Future
+bytes may be inspected speculatively, but they do not become an immutable
+transfer snapshot. Reset and state load discard the derived cache, including
+when restored RAM reuses generation numbers. No host pointer is serialized.
+
+Only command identities are cached. Their actual parameters are read when
+consumed, and `CmdFIFOWrite` plus the existing geometry executor apply live
+matrix, lighting, texture and polygon state. Geometry results, rasterization
+and render targets are not cached. `GPU3D_CommandBatch.h` adapts the pinned
+melonDS packed-command parser under GPL-3.0-or-later; patch 0020 records the new
+FIFO entry points, and notices are retained in the attribution file.
+
+This is a distinct deterministic timing profile: chunk setup/IRQ opportunities
+are coalesced, and CPU access to its DMA channel remains blocked through each
+native batch. ARM7, timers, display and Wi-Fi still advance through the existing
+scheduler; no host clock or GPU completion time advances guest simulation.
+Do not infer original timing, cross-build determinism or Wiimmfi compatibility
+from the selected observations below.
+
+Focused checks pass locally **and on SERVER**. The submission suite covers all
+channels, prior DMA, delayed source changes, ABI/unwind/snapshot continuation,
+final register publication and buffers spanning multiple native batches. The
+new differential test links the real legacy `WriteToGXFIFO` and geometry engine:
+20,000 mixed packed words, partial commands, FIFO overflow/stall state, source
+mutation between slices/pages, generation reuse after reset, and real triangle
+geometry/matrix results. Both HLE and LLE runner configurations build. Fresh
+HLE boot reaches the same tracked Gorea starting state; local and SERVER HLE
+images show normal geometry/HUD.
+
+One new matched pair on the same i5-4670/GTX760 SERVER used the prior frozen
+LLE reference and the frozen v2 candidate. Each loaded its own checkpoint,
+ran 120 untimed warm-up VBlanks, reloaded that checkpoint and timed 600 VBlanks.
+Compute rendering, native 256x192, vector HLE, muted output, governor off and
+the existing cheap instrumentation were matched. No extra timing leg ran.
+
+| Build | Wall seconds | ms/VBlank | VBlanks/s | Process CPU seconds |
+|---|---:|---:|---:|---:|
+| LLE reference | 6.485774 | 10.8096 | 92.5102 | 7.687500 |
+| HLE v2 | 5.720029 | 9.5334 | 104.8946 | 7.140625 |
+
+Observed throughput is **13.39% higher**, wall time 11.81% lower and process CPU
+time **7.11% lower**. Background work remains a limitation: other processes used
+4.90625 CPU seconds over the 6.747-second LLE census and 3.375 over 5.958 seconds
+for HLE, chiefly Java and WMI. The positive CPU result and avoided work make
+this a stronger candidate than v1; one pair does not establish a repeatable
+percentage or worst-frame latency. Historical v1 timings are not another leg
+of this pair and must not be used to attribute the incremental gain precisely.
+
+Both intervals completed 600 VBlanks with 672,228,000 ARM9/336,114,000 ARM7 cycles,
+zero interpreter fallback, and the same recorded initial/final room, health,
+position and player state. IRQ/timer counts differ, as expected for a distinct
+coarse timing profile; this is not a complete-state equivalence claim. V2
+performs 13,277 submissions and 13,577 native batches instead of 100,621 retail
+chunks, carrying 44,006,400 bytes. Scheduler rounds fall from 3,058,258 to 3,009,689.
+The decoder cache reports 636,777 hit lookups, 1,177 builds and 73,497 decoded
+words. Its `reused_words` diagnostic counts the **offered slice word budget**,
+which may be truncated by FIFO stall; it is not a consumed-word/byte counter.
+
+Private evidence lives in `scratch/mph-submit-hle-v2-20261018/` (frozen binary,
+fresh local checkpoints, unit/runner build logs, `server/summary.json`, per-arm
+censuses/measurements, raw profiles and images). Candidate SHA256 is
+`067b7a498238903b7022e0077976ce12f5d0dea0d5d352a428e4fa08cf656fc0`, build identity
+`0d190ca-dirty-mph-submit-hle-v2`. The baseline SHA256 remains the v1 assessment's
+LLE reference. The remote workspace is `C:/Users/matts/ndsrecomp-canary/20261018-v2`;
+both remote test runners are stopped and services were not changed.
+
+The measured candidate has been launched locally for the owner with normal
+interactive pacing/audio and a separate save copy. Practical feedback is
+pending, so the supported default remains LLE. Full online compatibility and
+cross-host deterministic qualification remain open regardless of that feedback.
+
 ## Larger follow-up opportunities from the donor comparison
 
 1. **Native GPU rasterization.** melonDS's maintained GPL-3.0-or-later
@@ -275,15 +369,16 @@ practical owner playtest qualification remain open.
    packed integer output, so changing the constructor alone would be incorrect.
    Keep guest-visible captures/results coherent and qualify any numerical
    effects before making online compatibility claims.
-2. **Cache/batch repeated command buffers.** Read-only inspection of the
+2. **Cache/batch repeated command buffers.** V2 implements the decoded-command
+   cache and transaction coalescing described above. The original inspection of the
    existing post-run DMA ring found 7,962 GXFIFO transfers among the last 8,192
    completions, but only 336 distinct source/count pairs across 40 source
    pages. Some pairs repeat 24 times within 25,905,493 system cycles (about
    46.2 frames); 6,905 transfers are full 118-word chunks. This is observed
    address/range reuse, not proof of unchanged contents. An xboxlle-style
-   resident/predecoded command service should use source generations/content,
-   parser continuation state and resource invalidation, then preserve actual
-   command effects and completion. Caching only by address or caching rendered
+   service uses source generations/content and parser continuation state while
+   preserving live command effects and completion. Further caching of geometry
+   results requires matrix/texture/resource inputs as well. Caching only by address or caching rendered
    results without matrix/texture/state inputs would violate the contract.
 3. **Larger title computation families.** Generated arithmetic still occupies
    the largest single self category. Target an attributed transform/animation

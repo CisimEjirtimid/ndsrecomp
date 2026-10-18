@@ -1,0 +1,27 @@
+diff --git a/runner/vendor/melonds/GPU3D.cpp b/runner/vendor/melonds/GPU3D.cpp
+index 70fe31f..7065586 100644
+--- a/runner/vendor/melonds/GPU3D.cpp
++++ b/runner/vendor/melonds/GPU3D.cpp
+@@ -2755,0 +2756,13 @@ void GPU3D::WriteToGXFIFO(u32 val) noexcept
++const u8* GPU3D::CommandParamCounts() noexcept { return CmdNumParams; }
++
++void GPU3D::WriteDecodedGXFIFO(u32 value, const u8* commands, u32 count) noexcept
++{
++    for (u32 i = 0; i < count; ++i)
++    {
++        CmdFIFOEntry entry;
++        entry.Command = commands[i];
++        entry.Param = value;
++        CmdFIFOWrite(entry);
++    }
++}
++
+diff --git a/runner/vendor/melonds/GPU3D.h b/runner/vendor/melonds/GPU3D.h
+index b63f4aa..784f4dd 100644
+--- a/runner/vendor/melonds/GPU3D.h
++++ b/runner/vendor/melonds/GPU3D.h
+@@ -124,0 +125,4 @@ public:
++    // Native ingress supplies predecoded packed words; effects still enter
++    // the ordinary FIFO and execute through the unchanged geometry engine.
++    static const u8* CommandParamCounts() noexcept;
++    void WriteDecodedGXFIFO(u32 value, const u8* commands, u32 count) noexcept;

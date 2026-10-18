@@ -1371,14 +1371,16 @@ std::string handle(const std::string& line) {
     if (cmd == "mph_submit") {
 #if defined(NDS_MPH_SUBMIT_HLE)
         const auto c = mph_submit::statistics();
-        return std::string("{\"implementation\":\"HLE\",\"profile\":\"mph-submit-hle-v1\",\"rom_supported\":") +
+        return std::string("{\"implementation\":\"HLE\",\"profile\":\"mph-submit-hle-v2\",\"rom_supported\":") +
             (c.rom_supported ? "true" : "false") +
             ",\"setup_calls\":" + std::to_string(c.setup_calls) +
             ",\"submit_calls\":" + std::to_string(c.submit_calls) +
             ",\"chunks\":" + std::to_string(c.chunks) +
             ",\"bytes\":" + std::to_string(c.bytes) +
             ",\"waits\":" + std::to_string(c.waits) +
-            ",\"completions\":" + std::to_string(c.completions) + "}";
+            ",\"completions\":" + std::to_string(c.completions) +
+            ",\"dma_batches\":" + std::to_string(c.dma_batches) +
+            ",\"command_cache\":" + nds_gpu3d_command_batch_json() + "}";
 #else
         return "{\"implementation\":\"LLE\"}";
 #endif

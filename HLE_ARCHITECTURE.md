@@ -26,8 +26,10 @@ Current build choices:
 - `NDS_MPH_MATH_IMPLEMENTATION=LLE|HLE`: three MPH vector operations.
 - `NDS_MKDS_IMPLEMENTATION=LLE|HLE`: integrated MKDS vector operations.
 - `NDS_MPH_SUBMIT_IMPLEMENTATION=LLE|HLE`: experimental MPH native DMA setup and
-  resumable geometry submission. LLE remains the default pending measurement
-  and practical qualification. See [the contract](docs/mph-submit-hle.md).
+  resumable geometry submission, contiguous transfers and decoded-command reuse
+  (`mph-submit-hle-v2`). The SERVER canary shows a material observed gain;
+  LLE remains the supported default pending owner playtest feedback. See
+  [the contract and qualification limits](docs/mph-submit-hle.md).
 
 ## Binding and continuations
 

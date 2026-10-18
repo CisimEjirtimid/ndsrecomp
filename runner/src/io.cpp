@@ -2994,6 +2994,51 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
         // units per FIFO-level request (melonDS DMA::Start IterCount cap).
         uint32_t request_units = gamecard ? 1u : gxfifo ? 112u : UINT32_MAX;
         while (d.remaining && g_runtime_cycles < target_cycles) {
+#if defined(NDS_MPH_SUBMIT_HLE)
+            // A native stream joins Main RAM directly to decoded GXFIFO
+            // ingress. Keep this scheduler slice, request limit, per-word bus
+            // time, channel priority and first actual FIFO stall intact.
+            const uint32_t source = d.src & ~3u;
+            const uint32_t offset = (d.cur_src - d.src) / 4u;
+            const uint64_t end = uint64_t{source} + uint64_t{offset + d.remaining} * 4u;
+            const bool dtcm = g_busf_dtcm_limit && source < uint64_t{g_busf_dtcm_base} + g_busf_dtcm_limit &&
+                              end > g_busf_dtcm_base;
+            if (cpu == 0 && width == 4u && !(d.src & 3u) && d.src_inc == 1 && d.dst_inc == 0 &&
+                d.cur_dst == 0x04000400u && source >= 0x02000000u &&
+                end <= 0x03000000u && source >= g_busf_itcm_limit && !dtcm &&
+                g_busf_main.data && g_busf_main.gen &&
+                uint64_t{source & g_busf_main.mask} + uint64_t{offset + d.remaining} * 4u <=
+                    uint64_t{g_busf_main.mask} + 1u) {
+                const uint32_t page_words = (4096u - (d.cur_src & 4095u)) / 4u;
+                const uint32_t limit = std::min({d.remaining, request_units, page_words});
+                uint32_t count = 0;
+                uint64_t time = g_runtime_cycles;
+                while (count < limit && time < target_cycles) {
+                    const uint32_t p = static_cast<uint16_t>(d.burst_index + count) % 118u;
+                    time += uint64_t{p == 0 ? 9u : p == 1 ? 3u : 2u} * 2u;
+                    ++count;
+                }
+                const uint32_t consumed = nds_gpu3d_command_batch(source,
+                    offset + d.remaining, offset, count, true);
+                // The ingress does not execute geometry or dispatch guest
+                // code. Advance only the words actually accepted before stall.
+                if (consumed != count) {
+                    time = g_runtime_cycles;
+                    for (uint32_t i = 0; i < consumed; ++i) {
+                        const uint32_t p = static_cast<uint16_t>(d.burst_index + i) % 118u;
+                        time += uint64_t{p == 0 ? 9u : p == 1 ? 3u : 2u} * 2u;
+                    }
+                }
+                g_runtime_cycles = time;
+                d.burst_index = static_cast<uint16_t>(d.burst_index + consumed);
+                d.cur_src += consumed * 4u;
+                d.remaining -= consumed;
+                d.burst_start = false;
+                request_units -= consumed;
+                if (!request_units || nds_gxfifo_stalled()) break;
+                continue;
+            }
+#endif
             const uint32_t unit = dma_unit_cycles(cpu, d, width);
             g_runtime_cycles += uint64_t{unit} << (cpu == 0 ? 1u : 0u);
             if (width == 4u) {

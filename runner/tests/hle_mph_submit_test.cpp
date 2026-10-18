@@ -11,8 +11,8 @@
 #include <vector>
 
 namespace {
-constexpr uint32_t base = 0x02200000u, stack = base + 0x3F00u;
-std::array<uint32_t, 4096> ram{};
+constexpr uint32_t base = 0x02200000u, stack = base + 0x3FF00u;
+std::array<uint32_t, 65536> ram{};
 std::array<std::array<uint32_t, 3>, 4> dma{};
 std::vector<uint32_t> output;
 std::vector<uint8_t> code;
@@ -29,14 +29,14 @@ void reset(uint32_t channel, uint32_t bytes) {
     for (unsigned r = 4; r <= 12; ++r) g_cpu.R[r] = 0x12340000u + r;
     g_cpu.R[0] = channel; g_cpu.R[1] = base; g_cpu.R[2] = bytes;
     g_cpu.R[13] = stack; g_cpu.R[14] = 0x020F0001u; g_cpu.R[15] = 0x01FF9470u;
-    for (unsigned i = 0; i < 1024; ++i) ram[i] = i * 0x10203u;
+    for (unsigned i = 0; i < ram.size() - 64u; ++i) ram[i] = i * 0x10203u;
     g_runtime_cycles = 0; g_nds_fast_limit = 128; g_nds_unwinding = 0;
 }
 void drain(unsigned channel) {
     auto& d = dma[channel];
     require(d[2] & 0x80000000u, "drain without pending transfer");
     const auto words = d[2] & 0x1FFFFFu;
-    require(words && words <= 118u && d[1] == 0x04000400u, "wrong transfer shape");
+    require(words && words <= 118u * 128u && d[1] == 0x04000400u, "wrong native transfer shape");
     for (uint32_t i = 0; i < words; ++i) output.push_back(word(d[0] + i * 4u));
     d[2] &= ~0x80000000u;
 }
@@ -61,7 +61,7 @@ void finish(unsigned channel, bool snapshot_resume) {
 }
 void tests() {
     mph_submit::initialize("90164d1ac127ee5f9815ea4ae7de798c7b5fc629");
-    for (uint32_t bytes : {0u, 4u, 468u, 472u, 476u, 944u, 2048u}) {
+    for (uint32_t bytes : {0u, 4u, 468u, 472u, 476u, 944u, 2048u, 60416u, 60892u, 121308u}) {
         for (unsigned channel = 0; channel < 4; ++channel) {
             reset(channel, bytes);
             // A prior transfer must complete before new source/length is published.
@@ -71,6 +71,12 @@ void tests() {
             require(output.size() == prefix + bytes / 4u, "lost/duplicated words");
             for (unsigned i = 0; i < bytes / 4u; ++i)
                 require(output[prefix + i] == i * 0x10203u, "command order/content");
+            if (bytes) {
+                const uint32_t last = ((bytes - 4u) % 472u) + 4u;
+                require(dma[channel][0] == base + bytes - last &&
+                        dma[channel][2] == (0x04400000u | (last / 4u)),
+                        "last retail chunk registers not published at completion");
+            }
         }
     }
     reset(2, 944);

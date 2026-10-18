@@ -1738,7 +1738,7 @@ int main(int argc, char** argv) {
     debug_set_savestate_identity(NDS_RUNNER_BUILD_ID, rom_sha1);
 #if defined(NDS_MPH_SUBMIT_HLE)
     if (mph_submit::initialize(rom_sha1.c_str()))
-        std::fprintf(stderr, "[hle] MPH submission selected at build time (mph-submit-hle-v1)\n");
+        std::fprintf(stderr, "[hle] MPH submission selected at build time (mph-submit-hle-v2)\n");
 #endif
 #if defined(NDS_MPH_MATH_HLE)
     if (mph_hle::initialize(rom_sha1.c_str())) {
