@@ -1,167 +1,76 @@
-# Performance HLE Architecture
+# Performance HLE architecture
 
-## Contract
+The governing policy is [recomp-template/HLE.md](../../recomp-template/HLE.md):
+keep a functioning LLE implementation, select implementations at build time,
+and preserve the caller-facing contract while allowing substantial shortcuts
+inside HLE. Small practically unnoticeable differences are permitted for
+substantial measured gains. Exact internal timing and state are not universal
+HLE requirements.
 
-The recompiled/LLE implementation is the accuracy floor and remains linked,
-runnable, and forceable. Performance HLE is a set of measured replacements
-above that floor. A replacement may become the default path after promotion;
-it never deletes its LLE body or changes a miss into a Tier-3 interpreter call.
+## Boundaries and selection
 
-The process follows the emotion-evolved model:
+Several LLE routines or devices may map to one HLE service. Choose a boundary
+that removes the actual cost: setup, dispatch, polling, transfer and completion
+can belong to one native operation. Its inputs, results, required memory,
+callbacks, interrupts and completion ordering remain its contract. Never skip
+required work or return fabricated success.
 
-1. Profile a representative workload and name the cost being replaced.
-2. Add a narrow seam while retaining the original implementation as the
-   fallback and differential oracle.
-3. Start the replacement off by default. Force it on and prove that it is hit.
-4. Run same-input differential and mixed HLE/LLE sequences. In verify mode the
-   LLE result is authoritative.
-5. Run whole-workload correctness gates and interleaved same-binary A/B.
-6. Reject a correct replacement if its real gain is noise or moves cost
-   elsewhere.
-7. Promote a winner independently. Keep a master force-floor control and loud
-   miss/fallback diagnostics.
+The developer chooses LLE or HLE when configuring and rebuilding. Maintain the
+LLE configuration in the current source tree. No master runtime accuracy toggle,
+automatic HLE/LLE switching, mixed-mode comparison or live state conversion is
+required. Existing renderer/debug controls are independent existing interfaces;
+they do not establish a requirement for future HLE runtime switches.
 
-Parity-safe replacements require byte-identical guest-visible state. An
-accuracy-affecting replacement additionally requires a per-item error contract,
-measured divergences, and explicit user approval before default-on promotion.
+Current build choices:
 
-## Policy surface
+- `NDS_MPH_MATH_IMPLEMENTATION=LLE|HLE`: three MPH vector operations.
+- `NDS_MKDS_IMPLEMENTATION=LLE|HLE`: integrated MKDS vector operations.
+- `NDS_MPH_SUBMIT_IMPLEMENTATION=LLE|HLE`: experimental MPH native DMA setup and
+  resumable geometry submission. LLE remains the default pending measurement
+  and practical qualification. See [the contract](docs/mph-submit-hle.md).
 
-The common vocabulary is:
+## Binding and continuations
 
-- `off`: use the faithful floor.
-- `on`: use promoted handlers and fall back to LLE for unsupported inputs.
-- `force`: testing mode; a configured candidate miss or fallback is fatal.
-- `verify`: execute both from the same input, retain the LLE result, and report
-  or fail on a contract violation.
-- `auto`: select a promoted backend when its host requirements are present;
-  otherwise use the faithful backend.
+A bare PC is not a code identity. Scope title services to the supported ROM,
+CPU, mode and fingerprinted resident code, including literals and dependencies
+owned by the replacement. Use the existing native cache/page-generation and
+active execution guards. A generated entry may prove only a short basic block;
+expand the HLE proof to its complete required range before caching/direct linking.
+Rejected bindings must also observe that range so repaired/replaced code can
+be reconsidered. Never edit generated C by hand.
 
-The intended controls are `NDS_HLE=off|on|verify` as a master policy,
-`NDS_HLE_MATH=off|on|force|verify` for title CPU routines, and
-`NDS_3D_RENDERER=auto|soft|compute` for rendering. `auto` is the renderer
-default: it prefers the OpenGL 4.3 compute backend when built and available,
-then falls back to the faithful software backend on startup failure. Explicit
-`compute` is fail-loud; explicit `soft` is the accuracy-floor override.
-Startup output must print the effective policy. Existing parity-safe host
-optimizations remain separate because they do not replace guest semantics.
+A resumable native service may use guest state or serializable private state.
+Define its continuation and interruption model; do not leave an operation
+half-complete in host stack locals across a scheduler unwind. Cross-build
+savestate compatibility is not implied. The existing straight-line leaf heat
+profiler remains useful instrumentation, not a restriction on HLE scope.
 
-## CPU/title routine seam
+## Determinism and online services
 
-A hook only in `runtime_dispatch` is insufficient: immutable generated banks
-may call one another directly, while validated RAM banks can contain multiple
-overlay generations at the same CPU address. A PC-only table can therefore
-miss calls or select the wrong routine.
+Simulation completion is driven by deterministic guest-time rules. Host clock,
+thread scheduling and GPU readiness cannot decide guest-visible results or
+completion order. Model the synchronization required by ARM9, ARM7, memory,
+DMA, interrupts, audio and Wi-Fi; do not widen scheduler slices indiscriminately.
+Presentation work may differ only while it cannot affect guest readback or
+simulation. Preserve ordinary Wiimmfi wire compatibility with existing peers.
+Where a recomp-controlled session protocol exists, exchange capabilities and
+agree on a qualified common simulation profile once before play; do not inject
+a new mandatory handshake into the DS protocol or claim a handshake exists
+where none is implemented. A shared build string or same-host check does not
+prove cross-build deterministic compatibility.
 
-Configured candidates instead receive a generated wrapper:
+## Validation and promotion
 
-```c
-static void title_routine_lle(void) {
-    /* the existing generated body, unchanged */
-}
+Reuse existing evidence. Compare meaningful outputs and completion at the
+promised boundary, exactly where exactness is promised and within documented
+bounds where approximation is intentional. Isolate differential fixtures;
+shipping binaries need not execute both implementations.
 
-void title_routine(void) {
-    if (g_cpu.R[15] == ROUTINE_START &&
-        runtime_hle_try(&title_routine_descriptor, title_routine_lle))
-        return;
-    title_routine_lle();
-}
-```
-
-Both dispatch entries and direct generated calls target the wrapper. Interior-PC
-resume dispatches enter the retained LLE body. For content-validated banks, the
-existing byte/provenance guard still runs before the wrapper. The wrapper symbol
-and descriptor identify the exact bank generation; the selector is not keyed by
-bare PC.
-
-Only configured candidates pay selector overhead. A per-title manifest owns
-candidate address, CPU/mode, bank identity, handler symbol, accuracy tier,
-register and memory footprint, cycle/interrupt contract, and comparison policy.
-The framework owns wrapper emission, selection, controls, counters, and the
-diagnostic ring. Generated C is never edited by hand.
-
-### Differential execution
-
-Simple verification is limited to pure or bounded-memory routines:
-
-1. Capture declared registers, CPSR, cycles, and bounded input memory.
-2. Run HLE and save its declared output.
-3. Restore the input.
-4. Run the retained recompiled body.
-5. Keep the LLE state visible and compare the complete declared contract.
-
-I/O, DMA, callbacks, or unbounded writes require a purpose-built isolation
-adapter. Whole-routine cycle charging is not automatically exact: making a
-routine atomic can move an IRQ boundary, so timing and interruptibility are part
-of every candidate's accuracy tier.
-
-The first CPU candidate will be selected from content-qualified dynamic data.
-The current castle captures do contain the seven named math routines at their
-expected addresses (the RAM-bank base is `0x01FF8000`); an earlier contrary
-audit decoded them with an incorrect `0x02000000` base. Bare-PC heat is still
-insufficient architecture: it cannot distinguish future bank generations and
-misses immutable-bank direct calls. Profiling must attribute calls and inclusive
-host time to the selected generated wrapper/bank identity. If hot, a fixed-point
-matrix/vector routine is the preferred first shape; floating-point division,
-square root, length, and normalization follow only when their whole-frame value
-justifies their larger error surface.
-
-The first measurement seam is intentionally narrower than a general call-tree
-profiler. A committed title manifest may select only an exact, content-validated
-whole function that the generator proves is a straight-line leaf with one
-unconditional return. In profiling builds only, its public generated symbol
-wraps the unchanged private LLE body. Every validated start/interior segment is
-counted; one configurable phase out of every `2^N` segments is timed. Clean
-normal and unwind segments are both accepted and counted separately; IRQ,
-invalid-length, nested-entry, depth, or guard/PC contamination is reported and
-excluded. Cumulative snapshots are subtracted around a stopped deterministic
-route; there is no arm/reset capture command. Profiler-OFF preprocessing emits
-the original public body directly, with object equivalence tested. This
-produces an optimistic instrumented body-cost estimate, not a formal removal or
-speedup bound. The sample clock and wrapper bookkeeping bias the numerator
-upward, while profiler overhead and work outside the wrapper affect the
-denominator and may bias the reported share in either direction. Multiple
-dispersed phases or an all-segment census are required before triage;
-uninstrumented HLE/LLE A/B remains the decision gate.
-
-A general non-leaf profiler would need per-CPU logical guest frames across host
-unwinds and descendant resumes. That machinery is deferred until a measured
-candidate requires it; wrapper-local wall clocks alone are not accepted for
-non-leaf inclusive attribution.
-
-## Renderer seam
-
-Renderer HLE uses melonDS's existing `Renderer3D` backend interface, not the CPU
-routine registry. `SoftRenderer` is the faithful forceable floor.
-`ComputeRenderer` is the accelerated replacement and must include the runner's
-flat-VRAM dirty tracking, GL 4.3 context lifecycle, and synchronized
-capture/readback needed by CPU-side GPU2D `GetLine` consumers.
-
-`soft` always selects the floor. Explicit `compute` fails loudly if unavailable.
-`auto` may fall back to threaded soft and report why. Renderer verify mode must
-render the same latched input through both backends, keep soft output visible,
-and compare both framebuffers plus capture/readback-visible state.
-
-This is also the scalable backend for later widescreen, supersampling, and AA;
-those enhancements remain separately controlled and are not implied by choosing
-the compute performance backend at native DS resolution.
-
-## Diagnostics and promotion gates
-
-Each domain exposes attempts, hits, fallbacks by reason, mismatches, maximum
-error, LLE/HLE cycle counts, and attributed host time. A bounded always-on ring
-records candidate/bank identity, CPU/mode/PC, input signature, decision, compare
-result, and instruction/cycle/VBlank anchors. Query it after the fact; do not
-arm-then-capture.
-
-Promotion requires:
-
-- handler differential tests over edge cases, randomized inputs, and pointer
-  aliasing where applicable;
-- forced-on G3 byte lock for exact replacements, then G1 and G2;
-- accuracy/error and long-gameplay validation for approximate replacements;
-- interleaved castle A/B min-of-N with hit count and attributed time; and
-- a material whole-workload win, not merely a faster microbenchmark.
-
-The master force-floor mode remains available after promotion. Any HLE miss
-executes the retained recompiled LLE body, never the dirty-RAM interpreter.
+Follow AGENTS.md's small run budget: one matched performance pair on equivalent
+useful gameplay, repeat only for a specific defect/noise question, one basic
+visual sanity inspection, then normal-audio owner playtest after a material gain.
+Do not anchor HLE performance to retired instructions: HLE intentionally removes
+them. Record simulated frame progress, wall time, whole-process work, build and
+scenario identity, and actual service hits. Build/check the LLE configuration.
+Keep neutral or regressing candidates draft. Online compatibility and
+cross-build determinism require their own evidence; offline speed is not proof.

@@ -1,5 +1,12 @@
 # DEBUG.md — Observability & the Debug Loop
 
+For HLE measurements, `run_vblanks count=600` advances equal simulated work
+without arming per-instruction hooks (serve mode only, count 1..6000). It reports
+actual VBlanks and terminal state; incomplete progress is not a valid sample.
+`mph_submit` reports the build-selected submission profile and monotonic service
+counters. Neither command changes the HLE/LLE implementation. See
+[`docs/mph-submit-hle.md`](docs/mph-submit-hle.md) for its contract and evidence.
+
 ## Always-on rings, never arm-then-capture
 
 Every diagnostic here is a **ring buffer that records continuously**

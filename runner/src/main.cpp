@@ -31,6 +31,9 @@
 #if defined(NDS_MPH_MATH_HLE)
 #include "hle_mph_math.h"
 #endif
+#if defined(NDS_MPH_SUBMIT_HLE)
+#include "hle_mph_submit.h"
+#endif
 #if defined(NDS_MKDS_HLE)
 #include "hle_mkds.h"
 #endif
@@ -1733,6 +1736,10 @@ int main(int argc, char** argv) {
     nds_diagnostics_set_identity(rom_sha1.c_str(), rom_name.c_str(),
                                  NDS_RUNNER_BUILD_ID);
     debug_set_savestate_identity(NDS_RUNNER_BUILD_ID, rom_sha1);
+#if defined(NDS_MPH_SUBMIT_HLE)
+    if (mph_submit::initialize(rom_sha1.c_str()))
+        std::fprintf(stderr, "[hle] MPH submission selected at build time (mph-submit-hle-v1)\n");
+#endif
 #if defined(NDS_MPH_MATH_HLE)
     if (mph_hle::initialize(rom_sha1.c_str())) {
         std::fprintf(stderr, "[hle] MPH native vector math selected at build time\n");

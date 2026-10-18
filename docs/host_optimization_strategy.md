@@ -27,7 +27,9 @@ optimizations; they do not prohibit this separate HLE policy. See
 The workspace validation policy also supersedes the old benchmark matrices
 and multi-route/repetition gates. Use focused interface and approximation
 checks for the respective builds and only the gameplay validation the owner
-has authorized. No HLE/LLE build selector has been implemented yet.
+has authorized. Build-selected vector services and experimental MPH submission
+are described in `../HLE_ARCHITECTURE.md`; the historical knob inventory below
+is not their promotion policy.
 
 Status doc for the "locked 60 FPS with headroom" workstream. Written
 2026-07-31 against framework `728d12b` + the forward-goto emission

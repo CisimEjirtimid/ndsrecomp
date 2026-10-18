@@ -27,6 +27,9 @@
 #if defined(NDS_MPH_MATH_HLE)
 #include "hle_mph_math.h"
 #endif
+#if defined(NDS_MPH_SUBMIT_HLE)
+#include "hle_mph_submit.h"
+#endif
 #if defined(NDS_MKDS_HLE)
 #include "hle_mkds.h"
 #endif
@@ -1365,6 +1368,21 @@ std::string handle(const std::string& line) {
                ",\"frames\":" + std::to_string(stats.frames) + "}";
     }
     if (cmd == "hle_heat") return nds_hle_profile_json();
+    if (cmd == "mph_submit") {
+#if defined(NDS_MPH_SUBMIT_HLE)
+        const auto c = mph_submit::statistics();
+        return std::string("{\"implementation\":\"HLE\",\"profile\":\"mph-submit-hle-v1\",\"rom_supported\":") +
+            (c.rom_supported ? "true" : "false") +
+            ",\"setup_calls\":" + std::to_string(c.setup_calls) +
+            ",\"submit_calls\":" + std::to_string(c.submit_calls) +
+            ",\"chunks\":" + std::to_string(c.chunks) +
+            ",\"bytes\":" + std::to_string(c.bytes) +
+            ",\"waits\":" + std::to_string(c.waits) +
+            ",\"completions\":" + std::to_string(c.completions) + "}";
+#else
+        return "{\"implementation\":\"LLE\"}";
+#endif
+    }
     if (cmd == "mph_math") {
 #if defined(NDS_MPH_MATH_HLE)
         const auto counts = mph_hle::statistics();
@@ -1650,7 +1668,7 @@ std::string handle(const std::string& line) {
     // fight the frame loop. Query the always-on rings / event_counts and
     // sample twice instead.
     if (g_play_mode && (cmd == "run_to_pc" || cmd == "run_to_event" ||
-                        cmd == "run_cycles" || cmd == "run_rounds"))
+                        cmd == "run_cycles" || cmd == "run_rounds" || cmd == "run_vblanks"))
         return "{\"error\":\"" + cmd + " unavailable in play mode: the "
                "frontend owns execution; query rings/event_counts and sample "
                "twice\"}";
@@ -1787,6 +1805,24 @@ std::string handle(const std::string& line) {
         return buf;
     }
 
+    if (cmd == "run_vblanks") {
+        // HLE replaces instructions, so compare equal simulated frames without
+        // arming the per-instruction event hook used by run_to_event.
+        const uint64_t frames = json_u64(line, "count", 0);
+        if (!frames || frames > 6000u) return "{\"error\":\"count must be 1..6000\"}";
+        const uint64_t first = nds_event_counts().vblank9;
+        uint64_t rounds = 0;
+        while (nds_event_counts().vblank9 - first < frames && rounds < 100000000u &&
+               !scheduler_cpu_terminal_halted(0) && !scheduler_cpu_terminal_halted(1)) {
+            scheduler_run_round();
+            ++rounds;
+        }
+        return std::string("{\"rounds\":") + std::to_string(rounds) +
+            ",\"vblanks\":" + std::to_string(nds_event_counts().vblank9 - first) +
+            ",\"terminal\":" +
+            ((scheduler_cpu_terminal_halted(0) || scheduler_cpu_terminal_halted(1)) ? "true" : "false") +
+            ",\"counts\":" + counts_json() + "}";
+    }
     if (cmd == "run_rounds") {
         uint64_t count = json_u64(line, "count", 0);
         constexpr uint64_t kMaxRounds = 5000000;

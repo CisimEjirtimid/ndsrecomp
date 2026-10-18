@@ -11,6 +11,9 @@
 #if defined(NDS_MPH_MATH_HLE)
 #include "hle_mph_math.h"
 #endif
+#if defined(NDS_MPH_SUBMIT_HLE)
+#include "hle_mph_submit.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -545,6 +548,27 @@ const CachedStaticLookup* lookup_static_cached_impl(const CpuCtx& c,
         slot = {};
         return nullptr;
     }
+#if defined(NDS_MPH_SUBMIT_HLE)
+    if (hit) {
+        const auto replacement = mph_submit::resolve(g_nds_active, pc, thumb);
+        if (replacement.guard_size) {
+            // Include dependencies even for a rejected binding. Changing an
+            // IRQ helper must invalidate a cached decline just like a hit.
+            if (!cache_validation_pages(slot, replacement.validation)) {
+                slot = {}; return nullptr;
+            }
+        }
+        if (replacement.function) {
+            CachedStaticLookup expanded = slot;
+            expanded.validation = replacement.validation;
+            expanded.page_count = 0;
+            if (cache_validation_pages(expanded, replacement.validation)) {
+                expanded.fn = replacement.function;
+                slot = expanded;
+            }
+        }
+    }
+#endif
 #if defined(NDS_MPH_MATH_HLE)
     // Build-selected whole-operation replacements share the existing cache
     // and content guards. Warm calls/direct links incur no HLE selector branch.
