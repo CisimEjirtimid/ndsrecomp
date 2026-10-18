@@ -186,6 +186,78 @@ The LLE build identity is `3a57236-dirty`; HLE is
 configuration identify these working-tree candidates; no cross-build state
 identity or public release is asserted.
 
+## SERVER low-end canary (2026-10-18)
+
+The owner requested an additional bounded pair on NAS/SERVER. `F:/NAS/README.md`
+documents the existing key-based SSH connection. The actual target is Windows
+10 Pro x64 build 19044, an Intel Core i5-4670 (4 cores/4 threads), 16 GiB RAM,
+and a GeForce GTX 760 with 2 GiB VRAM and NVIDIA driver 456.71. Its existing
+Balanced power plan was retained. A hidden WGL probe over SSH reported hardware
+OpenGL 4.6; both runners subsequently initialized their actual OpenGL 4.3 compute
+renderer, persistent-map readback, two 2D workers and one compositor helper.
+
+Used **one matched 600-VBlank pair**, LLE then HLE. Each arm received the same
+120-VBlank untimed renderer warm-up and then reloaded its own original exact-build
+checkpoint through the normal identity checks. The transferred frozen executable
+SHA256 values match the desktop manifests. No recompilation, cross-build identity
+override, fresh campaign traversal or multiplayer session was needed. One process
+ran at a time, audio output was dummy, networking and save persistence were off,
+the governor was off and timing was uncapped. As on the desktop, this is native
+256x192 headless rendering, not the owner's 448-wide interactive presentation.
+
+| Submission build | 600 VBlanks wall time | ms/VBlank | VBlanks/s | Process CPU time |
+|---|---:|---:|---:|---:|
+| LLE | 6.656460 s | 11.0941 | 90.1380 | 8.078125 s |
+| HLE | 6.451372 s | 10.7523 | 93.0035 | 8.265625 s |
+
+HLE shows **3.18% greater throughput / 3.08% lower wall time** in this pair,
+while process CPU time **increases 2.32%**. This modest observation is not a
+qualified material gain, and does not justify promoting the default. The server
+is usable as a lower-end canary, but it is not idle: a five-second preflight used
+5.25 CPU seconds across its four cores. Around the measured intervals, other
+processes consumed 4.265625 CPU seconds over 6.903 s for LLE and 3.781250 over
+6.697 s for HLE. Java and WMI account for most of that load; no unrelated process
+started or exited between either pair of census snapshots. These snapshots bracket
+the measurement and nearby debug/profile work rather than just the timed call.
+The modest wall-time difference cannot be separated confidently from that load
+and scheduling variation using this one pair. No services were stopped or tuned.
+
+Both intervals finish all 600 VBlanks without a terminal CPU or interpreter
+fallback. Guest cycle deltas, initial/final health, room and position exactly
+match the desktop observations above. HLE again performs 13,277 submissions,
+100,621 chunks and 44,006,400 bytes, removing 4,546,846 retired ARM9 instructions.
+However, scheduler rounds rise from 3,058,258 to 3,119,390 and GX-stalled rounds
+from 121,010 to 146,990; instruction removal has not established a CPU-time win.
+The real per-word DMA, command decode and geometry work still run. One HLE
+framebuffer from SERVER was inspected and shows normal Gorea gameplay/HUD.
+Matching these selected observations does not prove complete state equivalence,
+cross-host netplay determinism or Wiimmfi interoperability.
+
+The already-enabled sampler was dumped after each measurement without another
+simulation leg. In HLE's 1,669 emulation-thread self samples, generated code is
+33.79%, dispatch 9.11%, runtime/cycle helpers 7.37%, GPU3D 9.71%, bus/memory
+6.11%, DMA/timer/IRQ devices 5.75% and scheduler/sync 3.48%. This slightly wider
+6.67-second window includes checkpoint-load/debug overhead (state I/O is 2.40%).
+Unwinding fails in 98.1% of samples, so use self counts rather than inclusive
+totals. Only the hash-verified runner is mapped to local symbols; different
+SERVER OS/driver binaries are left unresolved instead of using this PC's DLLs.
+Those buckets rank investigation targets; they are not exact recoverable time.
+
+This strengthens the case for larger guest computation or command-buffer batches
+that avoid repeated work across the DMA/geometry boundary, as xboxlle does.
+Replacing the submission wrapper alone leaves most work intact. The native GL
+renderer remains a licensed donor opportunity, but this CPU profile does not
+establish GPU rasterization as the largest bottleneck on SERVER.
+
+Private evidence: `scratch/mph-submit-hle-20261018/server/` contains hardware,
+idle census, summary, per-arm measurement/census manifests, raw profiles,
+symbolization and framebuffers. The remote private workspace is
+`C:/Users/matts/ndsrecomp-canary/20261018`; `server_assess.py lle|hle` records the
+bounded procedure and reuses `tools/measure_mph_submit.py`. Both owned runner
+processes were stopped after collection. The server's Nextcloud, PostgreSQL and
+SSH services remain running. LLE remains the supported default; Wiimmfi and
+practical owner playtest qualification remain open.
+
 ## Larger follow-up opportunities from the donor comparison
 
 1. **Native GPU rasterization.** melonDS's maintained GPL-3.0-or-later
