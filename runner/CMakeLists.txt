@@ -32,6 +32,11 @@ set_property(CACHE NDS_ACCELERATED_RENDERER PROPERTY STRINGS COMPUTE OPENGL)
 option(NDS_BUILD_NATIVE_GL_TESTS "Build focused SDL3/native-GL context checks" OFF)
 option(NDS_GX_COMMAND_CACHE
     "Use guarded Main-RAM FIFO ingress and exact integer projection reuse" OFF)
+option(NDS_LINK_GUARD_REUSE
+    "Reuse verified target guards across literal callsites (CPU experiment)" OFF)
+if(NDS_LINK_GUARD_REUSE)
+    add_compile_definitions(NDS_LINK_GUARD_REUSE=1)
+endif()
 if(NOT NDS_ACCELERATED_RENDERER MATCHES "^(COMPUTE|OPENGL)$")
     message(FATAL_ERROR "NDS_ACCELERATED_RENDERER must be COMPUTE or OPENGL")
 endif()
@@ -92,6 +97,12 @@ if(NDS_MKDS_IMPLEMENTATION STREQUAL "HLE")
     if(NOT NDS_MKDS_HLE_GROUP_MASK EQUAL 7)
         string(APPEND NDS_BUILD_VARIANT "-groups${NDS_MKDS_HLE_GROUP_MASK}")
     endif()
+endif()
+if(NDS_LINK_GUARD_REUSE)
+    if(NDS_BUILD_VARIANT)
+        string(APPEND NDS_BUILD_VARIANT "-")
+    endif()
+    string(APPEND NDS_BUILD_VARIANT "link-guard-reuse-v1")
 endif()
 set(NDS_PGO_MODE "OFF" CACHE STRING
     "Runner-only GCC PGO mode: OFF, GENERATE, or USE")
@@ -1030,6 +1041,17 @@ ndsrecomp_link_tomlpp(frontend_config_test)
   ndsrecomp_link_tomlpp(mem_timing_test)
   target_link_libraries(mem_timing_test PRIVATE nds_armv4t nds_support)
   add_test(NAME mem_timing_test COMMAND mem_timing_test)
+
+  # Exercise guard sharing through the production bus/dispatcher, using the
+  # same device-free runtime support as the memory timing rail.
+  get_target_property(_link_guard_sources mem_timing_test SOURCES)
+  list(REMOVE_ITEM _link_guard_sources tests/mem_timing_test.cpp)
+  get_target_property(_link_guard_includes mem_timing_test INCLUDE_DIRECTORIES)
+  add_executable(link_guard_test tests/link_guard_test.cpp ${_link_guard_sources})
+  target_include_directories(link_guard_test PRIVATE ${_link_guard_includes})
+  ndsrecomp_link_tomlpp(link_guard_test)
+  target_link_libraries(link_guard_test PRIVATE nds_armv4t nds_support)
+  add_test(NAME link_guard_test COMMAND link_guard_test)
 
   add_executable(savestate_slots_test
       tests/savestate_slots_test.cpp

@@ -1743,6 +1743,7 @@ std::string handle(const std::string& line) {
         // the next round boundary. The loop condition (checked each round)
         // guarantees we exit once the target is reached.
         nds_event_break_arm(ev.c_str(), target);
+        const bool instruction_hook = g_insn_hook_armed != 0u;
         uint64_t rounds = 0;
         // Long firmware-menu waits eventually exceed the original fixed 5M
         // scheduler-round ceiling even though both CPUs and devices are still
@@ -1793,6 +1794,7 @@ std::string handle(const std::string& line) {
         bool reached = nds_event_value(ev.c_str()) >= target;
         bool exhausted = !reached && !stalled && rounds >= max_rounds;
         return std::string("{\"reached\":") + (reached ? "true" : "false") +
+            ",\"instruction_hook\":" + (instruction_hook ? "true" : "false") +
             ",\"stalled\":" + (stalled ? "true" : "false") +
             ",\"terminal\":" + (terminal ? "true" : "false") +
             ",\"reason9\":\"" + scheduler_cpu_halt_reason(0) + "\"" +

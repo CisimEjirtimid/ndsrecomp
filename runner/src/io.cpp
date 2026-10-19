@@ -647,7 +647,10 @@ extern "C" uint32_t g_insn_hook_armed = 1u;
 // inputs: the deep-trace policy and the event-break arming state. (Inside
 // this TU so it can see the file-local g_brk_ptr.)
 void nds_insn_hook_recompute() {
-    g_insn_hook_armed = (g_runtime_deep_trace || g_brk_ptr) ? 1u : 0u;
+    // Device counters call brk_check at their own increment sites. Only an
+    // instruction-count anchor needs to poll here on every retired opcode;
+    // arming a VBlank/DMA/etc. anchor must not add an instruction callback.
+    g_insn_hook_armed = (g_runtime_deep_trace || g_brk_is_insn) ? 1u : 0u;
 }
 
 // Armed per-insn payload for new-emission banks: the deep-trace register

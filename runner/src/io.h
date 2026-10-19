@@ -76,7 +76,7 @@ uint64_t nds_event_value(const char* name);
 // "Inline retired-instruction counters".
 extern "C" uint64_t g_insn_count[2];
 // Nonzero while any per-insn payload is armed (the deep-trace register
-// ring or an event break); generated code then calls runtime_insn_slow()
+// ring or an instruction-count break); generated code calls runtime_insn_slow()
 // after its inline bump. Recomputed by nds_insn_hook_recompute() whenever
 // either input changes.
 extern "C" uint32_t g_insn_hook_armed;

@@ -27,6 +27,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_set>
+#if defined(NDS_LINK_GUARD_REUSE)
+#include <unordered_map>
+#endif
 #include <vector>
 #if !defined(NDEBUG)
 #include <thread>
@@ -833,6 +836,28 @@ struct StaticGuardScope {
 // Stable addresses: a slot stores a raw pointer to one of these. Cleared
 // whenever the link epoch bumps, at which point no slot can reach one.
 std::deque<LinkGuard> g_link_guards;
+#if defined(NDS_LINK_GUARD_REUSE)
+// A target's complete identity, not the callsite, owns its proof. Reuse only
+// after the authoritative lookup has validated the same CPU, body and live
+// bank. Active execution guards remain private snapshots, so refreshing a
+// shared link record cannot conceal a write from a suspended caller.
+struct LinkGuardIdentity {
+    const NdsStaticValidation* validation;
+    void (*fn)(void);
+    uint32_t serial;
+    bool operator==(const LinkGuardIdentity&) const = default;
+};
+struct LinkGuardIdentityHash {
+    std::size_t operator()(const LinkGuardIdentity& key) const {
+        return std::hash<const NdsStaticValidation*>{}(key.validation) ^
+            (std::hash<decltype(key.fn)>{}(key.fn) << 1u) ^
+            (std::hash<uint32_t>{}(key.serial) << 2u);
+    }
+};
+std::array<std::unordered_map<LinkGuardIdentity, LinkGuard*,
+                              LinkGuardIdentityHash>, 2> g_link_guard_index;
+#endif
+uint64_t g_link_guard_reuses[2]{};
 constexpr std::size_t kLinkGuardCap = 1u << 16u;
 uint32_t g_link_epoch = 1u;
 uint64_t g_link_hits[2]{};
@@ -897,6 +922,9 @@ inline uint32_t link_key() {
 
 void link_epoch_bump() {
     if (++g_link_epoch == 0u) g_link_epoch = 1u;
+#if defined(NDS_LINK_GUARD_REUSE)
+    for (auto& index : g_link_guard_index) index.clear();
+#endif
     g_link_guards.clear();
 }
 
@@ -935,9 +963,25 @@ void link_slot_fill(NdsLinkSlot* slot, const CachedStaticLookup* hit) {
         // pool so a churning overlay cannot grow it without bound between
         // epoch bumps; past the cap validated targets simply stay on the
         // dispatcher until the next bank event clears the pool.
-        if (g_link_guards.size() >= kLinkGuardCap) return;
-        g_link_guards.emplace_back();
-        LinkGuard& guard = g_link_guards.back();
+        LinkGuard* selected = nullptr;
+#if defined(NDS_LINK_GUARD_REUSE)
+        auto& index = g_link_guard_index[g_nds_active];
+        const LinkGuardIdentity identity{
+            hit->validation, hit->fn, hit->live_bank_serial};
+        if (auto found = index.find(identity); found != index.end()) {
+            selected = found->second;
+            ++g_link_guard_reuses[g_nds_active];
+        }
+#endif
+        if (!selected) {
+            if (g_link_guards.size() >= kLinkGuardCap) return;
+            g_link_guards.emplace_back();
+            selected = &g_link_guards.back();
+#if defined(NDS_LINK_GUARD_REUSE)
+            index.emplace(identity, selected);
+#endif
+        }
+        LinkGuard& guard = *selected;
         guard.validation = hit->validation;
         guard.serial = hit->live_bank_serial;
         guard.page_count = hit->page_count;
@@ -1936,10 +1980,10 @@ extern "C" int runtime_inline_leaf_admit(const NdsLinkSlot* slot,
 
 extern "C" const char* nds_direct_link_json(void) {
     static std::string out;
-    char buf[520];
+    char buf[680];
     std::snprintf(buf, sizeof buf,
         "{\"enabled\":%s,\"deep_trace\":%s,\"epoch\":%u,"
-        "\"guards\":%zu,\"inline_leaves\":%s,"
+        "\"guards\":%zu,\"guard_reuses\":[%llu,%llu],\"inline_leaves\":%s,"
         "\"arm9\":{\"hits\":%llu,\"resolves\":%llu,\"skipped\":%llu,"
         "\"inline_leaf_admits\":%llu,\"inline_leaf_falls\":%llu},"
         "\"arm7\":{\"hits\":%llu,\"resolves\":%llu,\"skipped\":%llu,"
@@ -1947,6 +1991,8 @@ extern "C" const char* nds_direct_link_json(void) {
         g_direct_link ? "true" : "false",
         g_runtime_deep_trace ? "true" : "false",
         g_link_epoch, g_link_guards.size(),
+        static_cast<unsigned long long>(g_link_guard_reuses[0]),
+        static_cast<unsigned long long>(g_link_guard_reuses[1]),
         g_inline_leaves ? "true" : "false",
         static_cast<unsigned long long>(g_link_hits[0]),
         static_cast<unsigned long long>(g_link_resolves[0]),
@@ -2306,6 +2352,7 @@ extern "C" void runtime_init(void*) {
     g_direct_link = configured_direct_link();
     link_epoch_bump();
     g_link_hits[0] = g_link_hits[1] = 0u;
+    g_link_guard_reuses[0] = g_link_guard_reuses[1] = 0u;
     g_link_resolves[0] = g_link_resolves[1] = 0u;
     g_link_falls[0] = g_link_falls[1] = 0u;
     g_inline_leaves = configured_inline_leaves();
@@ -2365,6 +2412,7 @@ void runtime_savestate_reset_host_history() {
     g_nds_force_tier3_misses = 0u;
     g_nds_dispatch_stats[0] = {};
     g_nds_dispatch_stats[1] = {};
+    g_link_guard_reuses[0] = g_link_guard_reuses[1] = 0u;
     g_link_hits[0] = g_link_hits[1] = 0u;
     g_link_resolves[0] = g_link_resolves[1] = 0u;
     g_link_falls[0] = g_link_falls[1] = 0u;
