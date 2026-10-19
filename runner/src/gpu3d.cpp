@@ -638,7 +638,11 @@ NdsGpu3dRendererPolicy nds_gpu3d_renderer_policy() {
         return NdsGpu3dRendererPolicy::Auto;
     if (std::strcmp(value, "soft") == 0)
         return NdsGpu3dRendererPolicy::Soft;
-    if (std::strcmp(value, nds_gpu3d_compiled_accelerated_backend()) == 0)
+    // Existing launchers persist "compute" for their generic OpenGL choice.
+    // Keep that public setting compatible with the selected accelerated build;
+    // diagnostics always report the actual compiled backend.
+    if (std::strcmp(value, "compute") == 0 ||
+        std::strcmp(value, nds_gpu3d_compiled_accelerated_backend()) == 0)
         return NdsGpu3dRendererPolicy::Compute;
     return NdsGpu3dRendererPolicy::Invalid;
 }

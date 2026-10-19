@@ -234,6 +234,22 @@ if(TITLE_GROUP_COUNT GREATER 0)
     endforeach()
     set(TITLE_BANK_SOURCES ${TITLE_BANK_BODIES} ${TITLE_BANK_DISPATCH})
 endif()
+set(NDS_PREBUILT_BANK_ARCHIVE "" CACHE FILEPATH
+    "Developer reuse of an already validated bank archive with matching runtime ABI")
+set(NDS_PREBUILT_BANK_ARCHIVE_SHA256 "" CACHE STRING
+    "Required SHA256 of NDS_PREBUILT_BANK_ARCHIVE")
+if(NDS_PREBUILT_BANK_ARCHIVE)
+    if(NOT EXISTS "${NDS_PREBUILT_BANK_ARCHIVE}" OR NOT NDS_PREBUILT_BANK_ARCHIVE_SHA256)
+        message(FATAL_ERROR "Prebuilt bank archive requires an existing file and expected SHA256")
+    endif()
+    file(SHA256 "${NDS_PREBUILT_BANK_ARCHIVE}" _bank_archive_sha256)
+    if(NOT _bank_archive_sha256 STREQUAL NDS_PREBUILT_BANK_ARCHIVE_SHA256)
+        message(FATAL_ERROR "Prebuilt bank archive SHA256 mismatch")
+    endif()
+    add_library(nds_banks STATIC IMPORTED)
+    set_target_properties(nds_banks PROPERTIES IMPORTED_LOCATION "${NDS_PREBUILT_BANK_ARCHIVE}")
+    message(STATUS "Reusing bank archive ${_bank_archive_sha256}; release inventory checks remain required")
+else()
 add_library(nds_banks STATIC
     ${GEN}/arm9_bios.c
     ${GEN}/arm9_bios_dispatch.c
@@ -254,6 +270,7 @@ target_include_directories(nds_banks PRIVATE
     ${NDS_ARM_RECOMP_INCLUDE_DIRS}
     ${NDS_SM64DS_BANK_DIR}
     ${TITLE_GROUP_DIRS})
+endif()
 set_source_files_properties(
     ${GEN}/arm9_bios.c ${GEN}/arm9_bios_dispatch.c
     ${GEN}/arm7_bios.c ${GEN}/arm7_bios_dispatch.c

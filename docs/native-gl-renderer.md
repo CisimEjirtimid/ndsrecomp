@@ -7,7 +7,10 @@ banks and the existing MPH math/submission selections are unchanged.
 Build with `-DNDS_ACCELERATED_RENDERER=OPENGL` and the existing
 `NDS_ENABLE_COMPUTE_RENDERER=ON` infrastructure switch. Use
 `NDS_3D_RENDERER=native-gl` (strict) or `auto` (software fallback). The
-default build selection remains `COMPUTE`; `NDS_3D_RENDERER=soft` and
+default framework build selection remains `COMPUTE`. The Windows MPH preview
+selects `OPENGL`. Existing launchers' `NDS_3D_RENDERER=compute` setting selects
+the compiled accelerated backend; logs and `gpu3d_backend` report its actual
+name. `NDS_3D_RENDERER=soft` and
 `NDS_ENABLE_COMPUTE_RENDERER=OFF` retain the portable renderer. No renderer
 capabilities, imports or GL dependencies are needed by the latter build.
 
@@ -63,6 +66,14 @@ The full MPH runner and a separate software-only/headless runner built on
 Windows/GCC. All three focused tests passed on the available NVIDIA GL
 context. The fresh-boot Gorea frame showed the arena, hunter, weapon, HUD
 and touch screen without obvious corruption; this is a visual sanity check.
-No measured performance win or owner playability approval is claimed. Next
-qualification is one matched compute/native MPH pair on SERVER, followed
-by owner feedback if the candidate has a material gain.
+One matched 600-vblank uncapped Gorea pair on SERVER (i5-4670 / GTX760),
+with equal warmup, measured 89.7 to 98.7 vblanks/sec (+10.0% throughput)
+and 16.1% less process CPU time. Start/end gameplay state, guest event deltas
+and HLE call deltas matched. This is one canary sample, not a whole-game
+performance or Wiimmfi qualification. The connected-region experiment was
+flat and is excluded from the preview. Friends' playtest feedback is pending.
+
+Developer builds may reuse an existing bank archive with
+`NDS_PREBUILT_BANK_ARCHIVE` and its required SHA256. The caller must establish
+matching generated-bank inputs and runtime ABI; normal builds compile all
+banks. The full package inventory and shard-identity checks are unchanged.
