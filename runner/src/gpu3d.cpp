@@ -1068,6 +1068,9 @@ void nds_gpu3d_reset() {
 #endif
     g_nds.ARM9Timestamp = 0;
     g_nds.GPU.GPU3D.Reset();
+#if defined(NDS_MPH_SUBMIT_HLE)
+    g_nds.GPU.GPU3D.NativeProjectionCache.enabled = true;
+#endif
     // Match the retail/melonDS POWCNT1 reset value 0x820F.
     g_nds.GPU.GPU3D.SetEnabled(true, true);
     std::memset(g_nds.GPU.VRAMFlat_Texture, 0, sizeof g_nds.GPU.VRAMFlat_Texture);
@@ -1162,13 +1165,15 @@ uint32_t nds_gpu3d_command_batch(uint32_t source, uint32_t words,
 
 const char* nds_gpu3d_command_batch_json() {
 #if defined(NDS_MPH_SUBMIT_HLE)
-    static char text[256];
+    static char text[384];
     const auto c = g_command_cache.statistics;
+    const auto p = g_nds.GPU.GPU3D.NativeProjectionCache.statistics;
     std::snprintf(text, sizeof(text),
-        "{\"hits\":%llu,\"builds\":%llu,\"invalidations\":%llu,\"decoded_words\":%llu,\"reused_words\":%llu}",
+        "{\"hits\":%llu,\"builds\":%llu,\"invalidations\":%llu,\"decoded_words\":%llu,\"reused_words\":%llu,\"projection_hits\":%llu,\"projection_misses\":%llu}",
         (unsigned long long)c.hits, (unsigned long long)c.builds,
         (unsigned long long)c.invalidations, (unsigned long long)c.decoded_words,
-        (unsigned long long)c.reused_words);
+        (unsigned long long)c.reused_words,
+        (unsigned long long)p.hits, (unsigned long long)p.misses);
     return text;
 #else
     return "{}";

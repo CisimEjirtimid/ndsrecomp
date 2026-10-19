@@ -28,6 +28,27 @@ mid-operation fallback, or state-conversion mechanism.
 | `0x02080BD8` | r0: Q12 scale; r1: vector; r2: addend; r3: output | `out = (scale * vector >> 12) + addend` |
 | `0x02080DE0` | r0: first vector; r1: second vector; r2: output | Cross product, rounding each component with `+0x800` before shifting by 12 |
 | `0x0207FD38` | r0: vector; r1: 4x3 matrix; r2: output | Q12 transform plus the matrix's translation vector |
+| `0x0204E7E0` | same as `0x0207FD38` | Byte-identical game copy mapped to the same native operation |
+| `0x01FF8C2C`, `0x0207FDEC` | r0: left 4x3 matrix; r1: right matrix; r2: output | Complete Q12 affine matrix concatenation |
+
+The October 18 burndown adds the copied transform and both matrix-concatenation
+entries. Concatenation snapshots both complete inputs, supports distinct
+buffers and exact in-place aliases (including all three buffers equal), and
+uses unsigned modular accumulation around signed 64-bit products. Partial
+matrix-buffer overlaps and overlap with the routine's temporary stack are
+outside the SDK interface. It preserves callee-saved registers, SP/LR, CPU
+control state and return mode; volatile scratch registers and arithmetic
+flags are unspecified for this void SDK operation. One coarse 384-cycle
+charge completes the call. No host floating point or CPU-specific assembly
+is involved.
+
+Its 544-byte live fingerprint is checked independently of generated entry
+spans, which can end inside the function. Successful and declined lookups
+observe every code page, including the end on the next page in Main RAM.
+The normal dispatch/dependency guards continue to invalidate cached bindings.
+`mph_math` adds `matrix_concat_calls`. `hle_mph_math_test --image <private
+runtime.bin>` exercises the ITCM and RAM copies and the duplicated transform;
+no ROM or captured code is embedded in the test.
 
 Vectors have three 32-bit components. Products use signed components and
 64-bit modular accumulators; stored results wrap to 32 bits. The transform

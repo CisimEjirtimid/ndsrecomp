@@ -32,6 +32,8 @@ struct Memory : armv4t::Bus {
     void write32(uint32_t a, uint32_t v) override { write16(a, v); write16(a + 2, v >> 16); }
 };
 Memory* memory;
+std::vector<uint8_t> fixture;
+uint32_t fixture_base;
 unsigned ticks, return_checks, exchanges;
 bool unwind_on_tick, match_return;
 uint32_t expected_return;
@@ -126,21 +128,39 @@ uint32_t packed(const armv4t::CPSR& c) {
         (uint32_t{c.c} << 29) | (uint32_t{c.z} << 30) | (uint32_t{c.n} << 31);
 }
 
-void differential(const char* file) {
+void differential(const char* file, uint32_t code_base = 0x02004000u) {
     std::ifstream stream(file, std::ios::binary);
     require(bool(stream), "cannot open local ARM9 fixture");
-    const std::vector<uint8_t> code((std::istreambuf_iterator<char>(stream)), {});
+    fixture = std::vector<uint8_t>((std::istreambuf_iterator<char>(stream)), {});
+    fixture_base = code_base;
+    const auto& code = fixture;
     struct Case { uint32_t pc, size; mph_hle::Function fn; };
     const Case cases[] = {{0x02080BD8u, 96, mph_hle::scale_add},
                           {0x02080DE0u, 156, mph_hle::cross_product},
-                          {0x0207FD38u, 180, mph_hle::transform_translate}};
+                          {0x0207FD38u, 180, mph_hle::transform_translate},
+                          {0x0207FDECu, 544, mph_hle::matrix_concat},
+                          {0x01FF8C2Cu, 544, mph_hle::matrix_concat},
+                          {0x0204E7E0u, 180, mph_hle::transform_translate}};
     constexpr uint32_t edge[] = {0, 1, 0xFFFFFFFFu, 0x7FFFFFFFu, 0x80000000u,
         0x800u, 0xFFFFF800u, 4096, 0xFFFFF000u};
     unsigned comparisons = 0;
     for (const auto& test : cases) {
-        const auto offset = test.pc - 0x02004000u;
+        if (code_base == 0x02004000u && (test.pc < code_base || test.pc == 0x0204E7E0u)) continue;
+        const bool matrix = test.fn == mph_hle::matrix_concat;
+        const auto offset = test.pc - code_base;
         require(code.size() >= offset + test.size, "ARM9 fixture is too short");
         NdsStaticValidation validation{test.pc, test.size, code.data() + offset, nullptr, 0};
+        if (matrix) {
+            auto resolved = mph_hle::resolve_matrix(NDS_ARM9, test.pc, false);
+            require(resolved.function == test.fn && resolved.validation->size == 544,
+                    "whole matrix proof did not bind");
+            require(!mph_hle::resolve_matrix(NDS_ARM7, test.pc, false).function, "ARM7 matrix bound");
+            require(!mph_hle::resolve_matrix(NDS_ARM9, test.pc, true).function, "Thumb matrix bound");
+            fixture[offset + 540] ^= 1;
+            require(!mph_hle::resolve_matrix(NDS_ARM9, test.pc, false).function,
+                    "modified matrix tail bound");
+            fixture[offset + 540] ^= 1;
+        } else {
         require(mph_hle::resolve(NDS_ARM9, test.pc, false, &validation) == test.fn,
                 "fixture routine fingerprint differs from supported code");
         NdsStaticValidation enclosing{test.pc - 4u, test.size + 4u,
@@ -153,6 +173,7 @@ void differential(const char* file) {
         --validation.size;
         require(!mph_hle::resolve(NDS_ARM9, test.pc, false, &validation), "short proof bound");
         ++validation.size;
+        }
         for (unsigned n = 0; n < 512; ++n) {
             Memory actual;
             for (uint32_t p = base; p < base + actual.bytes.size(); p += 4)
@@ -160,7 +181,7 @@ void differential(const char* file) {
             reset_call(0x020F0000u | (n & 1u));
             for (unsigned r = 0; r < 13; ++r) g_cpu.R[r] = next_random();
             uint32_t a = base + 64, b = base + 128, out = base + 256;
-            switch (n % 8) {
+            switch (n % (matrix ? 4 : 8)) {
             case 1: out = a; break;
             case 2: out = b; break;
             case 3: out = a + 4; break;
@@ -169,6 +190,7 @@ void differential(const char* file) {
             case 6: b = a; break;
             case 7: ++a; b += 3; out += 2; break;
             }
+            if (matrix && n % 4 == 3) { b = a; out = a; }
             if (test.fn == mph_hle::scale_add) {
                 g_cpu.R[0] = n < 18 ? edge[n % 9] : next_random();
                 g_cpu.R[1] = a; g_cpu.R[2] = b; g_cpu.R[3] = out;
@@ -186,11 +208,11 @@ void differential(const char* file) {
                 bool(flags & 128u), bool(flags & 64u), false, 0x1F};
             unsigned instructions = 0;
             while (cpu.R[15] != expected_return) {
-                require(++instructions <= 64, "reference did not return");
+                require(++instructions <= 256, "reference did not return");
                 const uint32_t pc = cpu.R[15];
                 require(pc >= test.pc && pc < test.pc + test.size, "reference escaped routine");
                 uint32_t opcode;
-                std::memcpy(&opcode, code.data() + pc - 0x02004000u, 4);
+                std::memcpy(&opcode, code.data() + pc - code_base, 4);
                 const auto result = armv4t::Interpreter::step(cpu, reference,
                     armv4t::ArmDecoder::decode(opcode, pc));
                 require(result == armv4t::Interpreter::Result::Normal ||
@@ -199,16 +221,18 @@ void differential(const char* file) {
             memory = &actual;
             test.fn();
             for (unsigned r = 0; r < 16; ++r) {
+                if (matrix && (r < 4 || r == 12)) continue; // ABI volatile scratch
                 if (g_cpu.R[r] != cpu.R[r]) {
                     std::fprintf(stderr, "pc=%08X case=%u r%u HLE=%08X LLE=%08X\n",
                                  test.pc, n, r, g_cpu.R[r], cpu.R[r]);
                     throw std::runtime_error("return register mismatch");
                 }
             }
-            require(g_cpu.cpsr == packed(cpu.cpsr), "return flags mismatch");
+            const uint32_t mask = matrix ? 0x0FFFFFFFu : 0xFFFFFFFFu;
+            require((g_cpu.cpsr & mask) == (packed(cpu.cpsr) & mask), "return flags mismatch");
             for (uint32_t i = 0; i < actual.bytes.size(); ++i) {
                 // Dead stack-frame contents are internal implementation state.
-                if (i >= stack - base - 64 && i < stack - base) continue;
+                if (i >= stack - base - (matrix ? 80 : 64) && i < stack - base) continue;
                 require(actual.bytes[i] == reference.bytes[i], "caller memory mismatch");
             }
             require(ticks == 1 && return_checks == 1 && exchanges == 0, "operation completion boundary");
@@ -219,6 +243,13 @@ void differential(const char* file) {
 }
 } // namespace
 
+bool bus_range_has_write_provenance(uint32_t a, uint32_t size) {
+    return a >= fixture_base && uint64_t{a - fixture_base} + size <= fixture.size();
+}
+bool bus_debug_copy(int cpu, uint32_t a, uint8_t* out, uint32_t size) {
+    if (cpu != 0 || !bus_range_has_write_provenance(a, size)) return false;
+    std::memcpy(out, fixture.data() + a - fixture_base, size); return true;
+}
 extern "C" {
 ArmCpuState g_cpu{};
 NdsCpu g_nds_active = NDS_ARM9;
@@ -252,7 +283,8 @@ int main(int argc, char** argv) {
     try {
         smoke();
         if (argc == 3 && std::strcmp(argv[1], "--arm9") == 0) differential(argv[2]);
-        else require(argc == 1, "usage: hle_mph_math_test [--arm9 private/arm9.bin]");
+        else if (argc == 3 && std::strcmp(argv[1], "--image") == 0) differential(argv[2], 0x01FF8000u);
+        else require(argc == 1, "usage: hle_mph_math_test [--arm9 arm9.bin | --image runtime.bin]");
         std::puts("[hle_mph_math_test] PASS");
         return 0;
     } catch (const std::exception& e) {

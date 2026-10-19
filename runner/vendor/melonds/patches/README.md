@@ -460,3 +460,13 @@ decoder-context cache. It caches decoded command identities, not geometry or
 rendering results. Matrix/test busy flags, FIFO/stall handling and the geometry
 executor continue through `CmdFIFOWrite` and `Run`. The runner uses the adapter
 only in the build-selected MPH submission HLE configuration.
+
+## 0021-gpu3d-projection-cache.patch
+
+2026-10-18: extracts the existing viewport projection into `ProjectVertex`,
+retaining the exact integer body, and optionally memoizes its results through
+the separate GPL-covered `GPU3D_ProjectionCache.h`. Full clip-position,
+viewport, output-width and guest-wide-mode keys qualify hits. Zero-W behavior
+is retained. Reset and load discard derived entries. The bridge enables this
+only in the MPH submission HLE build; focused tests compare it with caching
+disabled. FIFO/device timing and polygon processing are unchanged.

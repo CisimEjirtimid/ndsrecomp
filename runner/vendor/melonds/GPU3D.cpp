@@ -188,6 +188,7 @@ void GPU3D::ResetRenderingState() noexcept
 
 void GPU3D::Reset() noexcept
 {
+    NativeProjectionCache.clear();
     CmdFIFO.Clear();
     CmdPIPE.Clear();
 
@@ -312,6 +313,7 @@ void GPU3D::Reset() noexcept
 
 void GPU3D::DoSavestate(Savestate* file) noexcept
 {
+    if (!file->Saving) NativeProjectionCache.clear();
     file->Section("GP3D");
 
     SoftRenderer* softRenderer = dynamic_cast<SoftRenderer*>(CurrentRenderer.get());
@@ -1139,72 +1141,7 @@ void GPU3D::SubmitPolygon() noexcept
     {
         Vertex* vtx = &clippedvertices[i];
 
-        // W is truncated to 24 bits at this point
-        // if this W is zero, the polygon isn't rendered
-        vtx->Position[3] &= 0x00FFFFFF;
-
-        // viewport transform
-        // note: the DS performs these divisions using a 32-bit divider
-        // thus, if W is greater than 0xFFFF, some precision is sacrificed
-        // to make the numbers fit into the divider
-        u32 viewport_width, viewport_x;
-        if (GuestWideProjection)
-        {
-            // Guest screen X 0..256 already means the whole RenderWidth band,
-            // so every viewport maps linearly onto it. The end is derived from
-            // the sum, not from a scaled width, so viewports the guest emits
-            // back to back still tile without a seam.
-            const u32 x_start = (Viewport[0] * RenderWidth) / 256;
-            const u32 x_end = ((Viewport[0] + Viewport[4]) * RenderWidth) / 256;
-            viewport_x = x_start;
-            viewport_width = x_end - x_start;
-        }
-        else
-        {
-            const bool enhanced_full_viewport =
-                RenderWidth > 256 && Viewport[0] == 0 && Viewport[4] == 256;
-            viewport_width = enhanced_full_viewport ? RenderWidth : Viewport[4];
-            viewport_x = enhanced_full_viewport
-                ? 0 : Viewport[0] + (RenderWidth - 256) / 2;
-        }
-        u32 posX, posY;
-        u32 w = vtx->Position[3];
-        if (w == 0)
-        {
-            posX = 0;
-            posY = 0;
-        }
-        else
-        {
-            posX = vtx->Position[0] + w;
-            posY = -vtx->Position[1] + w;
-            u32 den = w;
-
-            if (w > 0xFFFF)
-            {
-                posX >>= 1;
-                posY >>= 1;
-                den  >>= 1;
-            }
-
-            den <<= 1;
-            posX = ((posX * viewport_width) / den) + viewport_x;
-            posY = ((posY * Viewport[5]) / den) + Viewport[3];
-        }
-
-        vtx->FinalPosition[0] = posX & 0x1FF;
-        vtx->FinalPosition[1] = posY & 0xFF;
-
-        // hi-res positions
-        // to consider: only do this when using the GL renderer? apply the aforementioned quirk to this?
-        if (w != 0)
-        {
-            posX = ((((s64)(vtx->Position[0] + w) * viewport_width) << 4) / (((s64)w) << 1)) + (viewport_x << 4);
-            posY = ((((s64)(-vtx->Position[1] + w) * Viewport[5]) << 4) / (((s64)w) << 1)) + (Viewport[3] << 4);
-
-            vtx->HiresPosition[0] = posX & 0x1FFF;
-            vtx->HiresPosition[1] = posY & 0xFFF;
-        }
+        ProjectVertex(vtx);
     }
 
     // zero-dot W check:
@@ -1411,6 +1348,94 @@ void GPU3D::SubmitPolygon() noexcept
         LastStripPolygon = poly;
     else
         LastStripPolygon = NULL;
+}
+
+void GPU3D::ProjectVertex(Vertex* vtx) noexcept
+{
+    // W is truncated to 24 bits at this point
+    // if this W is zero, the polygon isn't rendered
+    vtx->Position[3] &= 0x00FFFFFF;
+
+    ProjectionCache::Key key{};
+    if (NativeProjectionCache.enabled) {
+        for (unsigned i = 0; i < 4; ++i) key[i] = static_cast<u32>(vtx->Position[i]);
+        for (unsigned i = 0; i < 6; ++i) key[i + 4] = Viewport[i];
+        key[10] = RenderWidth; key[11] = GuestWideProjection;
+        if (const auto* hit = NativeProjectionCache.find(key)) {
+            vtx->FinalPosition[0] = (*hit)[0]; vtx->FinalPosition[1] = (*hit)[1];
+            // The reference leaves hires coordinates alone for zero W.
+            if (vtx->Position[3]) {
+                vtx->HiresPosition[0] = (*hit)[2]; vtx->HiresPosition[1] = (*hit)[3];
+            }
+            return;
+        }
+    }
+
+    // viewport transform
+    // note: the DS performs these divisions using a 32-bit divider
+    // thus, if W is greater than 0xFFFF, some precision is sacrificed
+    // to make the numbers fit into the divider
+    u32 viewport_width, viewport_x;
+    if (GuestWideProjection)
+    {
+        // Guest screen X 0..256 already means the whole RenderWidth band,
+        // so every viewport maps linearly onto it. The end is derived from
+        // the sum, not from a scaled width, so viewports the guest emits
+        // back to back still tile without a seam.
+        const u32 x_start = (Viewport[0] * RenderWidth) / 256;
+        const u32 x_end = ((Viewport[0] + Viewport[4]) * RenderWidth) / 256;
+        viewport_x = x_start;
+        viewport_width = x_end - x_start;
+    }
+    else
+    {
+        const bool enhanced_full_viewport =
+            RenderWidth > 256 && Viewport[0] == 0 && Viewport[4] == 256;
+        viewport_width = enhanced_full_viewport ? RenderWidth : Viewport[4];
+        viewport_x = enhanced_full_viewport
+            ? 0 : Viewport[0] + (RenderWidth - 256) / 2;
+    }
+    u32 posX, posY;
+    u32 w = vtx->Position[3];
+    if (w == 0)
+    {
+        posX = 0;
+        posY = 0;
+    }
+    else
+    {
+        posX = vtx->Position[0] + w;
+        posY = -vtx->Position[1] + w;
+        u32 den = w;
+
+        if (w > 0xFFFF)
+        {
+            posX >>= 1;
+            posY >>= 1;
+            den  >>= 1;
+        }
+
+        den <<= 1;
+        posX = ((posX * viewport_width) / den) + viewport_x;
+        posY = ((posY * Viewport[5]) / den) + Viewport[3];
+    }
+
+    vtx->FinalPosition[0] = posX & 0x1FF;
+    vtx->FinalPosition[1] = posY & 0xFF;
+
+    // hi-res positions
+    // to consider: only do this when using the GL renderer? apply the aforementioned quirk to this?
+    if (w != 0)
+    {
+        posX = ((((s64)(vtx->Position[0] + w) * viewport_width) << 4) / (((s64)w) << 1)) + (viewport_x << 4);
+        posY = ((((s64)(-vtx->Position[1] + w) * Viewport[5]) << 4) / (((s64)w) << 1)) + (Viewport[3] << 4);
+
+        vtx->HiresPosition[0] = posX & 0x1FFF;
+        vtx->HiresPosition[1] = posY & 0xFFF;
+    }
+    if (NativeProjectionCache.enabled)
+        NativeProjectionCache.insert(key, {vtx->FinalPosition[0], vtx->FinalPosition[1],
+            w ? vtx->HiresPosition[0] : 0, w ? vtx->HiresPosition[1] : 0});
 }
 
 void GPU3D::SubmitVertex() noexcept

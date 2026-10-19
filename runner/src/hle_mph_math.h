@@ -10,6 +10,7 @@ struct Statistics {
     uint64_t scale_add_calls;
     uint64_t cross_product_calls;
     uint64_t transform_translate_calls;
+    uint64_t matrix_concat_calls;
 };
 // Read on the emulation thread. Monotonic counters are diagnostic only;
 // snapshots/loads do not reset them or select an implementation.
@@ -23,8 +24,16 @@ bool initialize(const char* rom_sha1);
 // retains its existing validation/page-generation guards around the result.
 Function resolve(NdsCpu cpu, uint32_t pc, bool thumb,
                  const NdsStaticValidation* validation);
+struct MatrixReplacement {
+    Function function;
+    const NdsStaticValidation* validation;
+};
+// The concatenation spans generated validation regions. Its complete live
+// fingerprint and both positive/negative cache dependencies are independent.
+MatrixReplacement resolve_matrix(NdsCpu cpu, uint32_t pc, bool thumb);
 
 void scale_add();
 void cross_product();
 void transform_translate();
+void matrix_concat();
 } // namespace mph_hle

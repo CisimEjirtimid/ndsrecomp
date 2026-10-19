@@ -577,6 +577,16 @@ const CachedStaticLookup* lookup_static_cached_impl(const CpuCtx& c,
                                                 hit->validation)) {
             slot.fn = replacement;
         }
+        const auto matrix = mph_hle::resolve_matrix(g_nds_active, pc, thumb);
+        if (matrix.validation) {
+            if (!cache_validation_pages(slot, matrix.validation)) {
+                slot = {}; return nullptr;
+            }
+            if (matrix.function) {
+                slot.validation = matrix.validation;
+                slot.fn = matrix.function;
+            }
+        }
     }
 #endif
 #if defined(NDS_MKDS_HLE)

@@ -24,6 +24,7 @@
 
 #include "Savestate.h"
 #include "FIFO.h"
+#include "GPU3D_ProjectionCache.h"
 
 namespace melonDS
 {
@@ -126,6 +127,8 @@ public:
     // the ordinary FIFO and execute through the unchanged geometry engine.
     static const u8* CommandParamCounts() noexcept;
     void WriteDecodedGXFIFO(u32 value, const u8* commands, u32 count) noexcept;
+    ProjectionCache NativeProjectionCache;
+    void ProjectVertex(Vertex* vertex) noexcept;
 
     [[nodiscard]] bool IsRendererAccelerated() const noexcept;
     [[nodiscard]] Renderer3D& GetCurrentRenderer() noexcept { return *CurrentRenderer; }

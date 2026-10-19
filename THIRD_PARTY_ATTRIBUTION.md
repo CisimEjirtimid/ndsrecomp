@@ -128,6 +128,11 @@ remains a device model, not HLE).
   cache. It is GPL-3.0-or-later with the melonDS copyright retained. It caches
   no matrix/geometry results and changes no renderer arithmetic. The legacy
   parser is retained and used directly by the differential test.
+- `GPU3D_ProjectionCache.h` is a project-written GPL-3.0-or-later cache of
+  exact integer viewport results. Patch `0021` extracts the existing projection
+  body without changing its arithmetic and adds the optional cache. The
+  cache-disabled body remains the reference; the MPH submission HLE build
+  enables caching. No GPU resources, color, timing or polygon state is cached.
 - Project-written compute adapters under `runner/src/melonds_compute/`
   provide the host GL-context owner, the `GLCompositor` interface slice, and
   the `Platform` file-service slice consumed by the byte-identical upstream

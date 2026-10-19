@@ -1371,7 +1371,7 @@ std::string handle(const std::string& line) {
     if (cmd == "mph_submit") {
 #if defined(NDS_MPH_SUBMIT_HLE)
         const auto c = mph_submit::statistics();
-        return std::string("{\"implementation\":\"HLE\",\"profile\":\"mph-submit-hle-v2\",\"rom_supported\":") +
+        return std::string("{\"implementation\":\"HLE\",\"profile\":\"mph-submit-hle-v3\",\"rom_supported\":") +
             (c.rom_supported ? "true" : "false") +
             ",\"setup_calls\":" + std::to_string(c.setup_calls) +
             ",\"submit_calls\":" + std::to_string(c.submit_calls) +
@@ -1392,7 +1392,8 @@ std::string handle(const std::string& line) {
             (counts.rom_supported ? "true" : "false") +
             ",\"scale_add_calls\":" + std::to_string(counts.scale_add_calls) +
             ",\"cross_product_calls\":" + std::to_string(counts.cross_product_calls) +
-            ",\"transform_translate_calls\":" + std::to_string(counts.transform_translate_calls) + "}";
+            ",\"transform_translate_calls\":" + std::to_string(counts.transform_translate_calls) +
+            ",\"matrix_concat_calls\":" + std::to_string(counts.matrix_concat_calls) + "}";
 #else
         return "{\"implementation\":\"LLE\"}";
 #endif

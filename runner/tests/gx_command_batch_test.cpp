@@ -130,6 +130,35 @@ void tests() {
                 "geometry/matrix execution differs");
     }
     require(a.NumVertices >= 3 && a.NumPolygons > 0, "geometry fixture did not emit a triangle");
+
+    // Exact integer projection against the cache-disabled retained body.
+    // Include repeated shared vertices, collisions, viewport/width changes,
+    // the 16-bit W divider boundary, zero W and guest widescreen projection.
+    b.NativeProjectionCache.enabled = true;
+    for (unsigned i = 0; i < 4096; ++i) {
+        const unsigned sample = i / 2;
+        Vertex left{}, right{};
+        seed = sample * 1664525u + 1013904223u;
+        left.Position[0] = static_cast<s32>(seed & 0xFFFF) - 32768;
+        left.Position[1] = static_cast<s32>((seed >> 16) & 0xFFFF) - 32768;
+        left.Position[2] = seed & 0xFFFFF;
+        const u32 ws[] = {0, 1, 0xFFFF, 0x10000, 0xFFFFFF, 0x1001000};
+        left.Position[3] = ws[sample % 6];
+        left.HiresPosition[0] = 123; left.HiresPosition[1] = 456;
+        right = left;
+        const u32 widths[] = {256, 448, 384};
+        a.SetRenderWidth(widths[(sample / 32) % 3]); b.SetRenderWidth(a.GetRenderWidth());
+        a.SetGuestWideProjection((sample / 96) % 2); b.SetGuestWideProjection(a.GetGuestWideProjection());
+        const u32 viewport[] = {sample % 2 ? 8u : 0u, 0, 255, 3, sample % 2 ? 128u : 256u, 189};
+        std::memcpy(a.Viewport, viewport, sizeof(viewport));
+        std::memcpy(b.Viewport, viewport, sizeof(viewport));
+        a.ProjectVertex(&left); b.ProjectVertex(&right);
+        require(!std::memcmp(&left, &right, sizeof(Vertex)), "cached integer projection differs");
+    }
+    require(b.NativeProjectionCache.statistics.hits >= 2048 && b.NativeProjectionCache.statistics.misses,
+            "projection cache did not exercise hits and misses");
+    b.Reset();
+    require(!b.NativeProjectionCache.statistics.hits, "projection cache survived reset");
 }
 }
 int main() {

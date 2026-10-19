@@ -395,6 +395,106 @@ candidate was launched as a completed QA handoff.
 
 ## Reproduction
 
+### October 18 quick burndown: v3
+
+This bounded pass adds three implementation candidates without PGO or bank
+regeneration:
+
+| Target | Implemented result | Activity in the 600-VBlank canary |
+|---|---|---|
+| Full affine matrix job | ITCM `0x01FF8C2C` and RAM `0x0207FDEC` share one native concatenation kernel, independently fingerprinted across generated-region boundaries | 22,735 native calls |
+| Duplicate vector service | RAM `0x0204E7E0` maps to the existing byte-identical transform HLE | 44 additional native transform calls |
+| Repeated viewport arithmetic | Exact integer projection results cached by full clip position, viewport, output width and guest-wide mode | 190,502 hits / 206,215 misses, about 48% reuse |
+
+The projection cache contains only derived coordinates, uses bounded storage
+and discards entries on reset/load. It preserves zero-W behavior, including
+leaving the original hires coordinates alone. Polygon clipping, colors,
+attributes, FIFO execution, device cycles, renderer resources and capture
+readback still follow their existing paths. The submission HLE build enables
+the cache; the LLE build leaves it disabled. Concatenation replaces the whole
+SDK operation with one coarse timing charge, rather than replaying ARM
+instructions. See `mph-math-hle.md` for its caller contract and alias support.
+
+Checks: 3,072 private original-code differential cases pass, including both
+matrix copies, arithmetic extremes, exact in-place aliases, all buffers equal,
+return interworking and modified code tails. The real-device geometry test
+adds 4,096 cached/uncached projection comparisons covering collisions,
+viewport/output-width/guest-wide changes, zero W and the 16-bit divider
+boundary. Existing FIFO/parser/mutation/stall checks still pass locally and
+on SERVER. Both the HLE runner and the fully opted-out LLE runner
+(`MATH=LLE`, `SUBMIT=LLE`) build; the LLE startup check passes. Fresh local
+and SERVER Gorea images look normal. No assembly, optional CPU requirements,
+Wi-Fi protocol changes or scheduler-quantum changes were added.
+
+The matched comparison isolates this pass against the already optimized v2,
+using the same i5-4670/GTX760 SERVER, native 256x192 compute output, governor
+off, muted output, exact-build checkpoints and 600 VBlanks per arm. Initial
+and reversed pairs used the announced two-pair budget. The owner then
+explicitly requested waiting for background apps to become idle and retrying;
+that authorized one additional quiet-period pair. No further runs were made.
+
+| Pair | v2 wall / CPU seconds | v3 wall / CPU seconds | Observed throughput change |
+|---|---|---|---|
+| Initial | 5.924131 / 7.078125 | 5.684661 / 7.390625 | +4.21% |
+| Reverse order | 5.744060 / 6.796875 | 5.609136 / 6.640625 | +2.41% |
+| Owner-requested quiet period | 5.722207 / 6.765625 | 5.582130 / 6.781250 | +2.51% |
+
+The initial v2 arm had 8.86 foreign CPU-seconds, including Prowlarr/Sonarr;
+v3 had 3.06. That justified the reverse pair. For the owner's quiet retry,
+each arm required three consecutive 10-second windows with Prowlarr/Sonarr
+below 0.02 combined cores and all observed background work below one of the
+four cores. The first stricter half-core threshold was below the server's
+normal background floor and was replaced before any quiet-period gameplay
+measurement. Prowlarr/Sonarr then consumed **zero CPU time during both timed
+arms**. The owner authorized temporary suspension if necessary; none was
+needed and no services were paused or stopped.
+
+Other background work remained: quiet v2/v3 censuses observed 4.28/2.92 foreign
+CPU-seconds over 6.00/5.83 seconds, mostly WMI, Java and Steam's helper. Thus
+the +2.51% throughput observation remains modest evidence, with process CPU
+essentially flat (+0.23%), rather than a proven large gain. It must not be
+added arithmetically to the historical v2-versus-LLE result. These are
+VBlank-throughput measurements at native output, not interactive 448-wide
+rendered-frame guarantees. Individual changes were not independently timed.
+
+In all three pairs, each arm completed 600 VBlanks with equal ARM9/ARM7 cycle
+deltas (672,228,000 / 336,114,000), zero interpreter fallback, and the same
+tracked starting/ending room, health and position. ARM9 instruction count
+falls from 53,322,058 to 50,385,227 (2,936,831 fewer). Matrix timing changes
+produce small IRQ/timer/submission differences; this is **not** full-state
+equivalence between v2 and v3 or online qualification. Wiimmfi with unmodified
+peers and full cross-host determinism remain open. The supported submission
+default stays LLE pending practical qualification; v3 remains an experimental
+build candidate, not a new release.
+
+Evidence is private under `scratch/mph-quick-burndown-20261018`, including
+each raw interval, process census, quiet-gate log and `server/quiet-summary.json`.
+The v3 frozen executable SHA256 is
+`f7a8ec50eff79aa959a24f30e39101ab91e968befda78732a3867f6a9606a5ec`, with its
+honest `3a767c9-dirty-mph-submit-hle-v3` build identity. The v2 hash remains
+`067b7a498238903b7022e0077976ce12f5d0dea0d5d352a428e4fa08cf656fc0`.
+
+The quick R&D also narrows the larger next attempts:
+
+- **Native GPU rasterization remains the larger graphics port.** The pinned,
+  license-compatible melonDS GL renderer supplies real indexed native draws.
+  Its conversion to the current compute-specific bridge, widened surfaces,
+  packed color/attributes and capture ownership is still necessary. This pass
+  does not substitute a constructor change for that port or claim its gain.
+- **Larger connected CPU regions remain a separate generator task.** The hot
+  `0x02048000` symbol is an interior continuation at a region boundary, not
+  evidence of a self-contained expensive service. Existing D1 regions still
+  publish global CPU state and poll instruction timing. Reducing those handoffs
+  across larger validated regions has more scope than replacing another tiny
+  IRQ helper; prior neutral leaf/cache-layout experiments were not repeated.
+- **ARM7 audio/service HLE needs its own complete contract.** The reviewed
+  NooDS donor's touch/unknown-command handling does not implement MPH's sound
+  and WFC services. Replacing ARM7 wholesale would discard required behavior;
+  a future sound transaction service can coexist with the maintained ARM7
+  fallback and Wi-Fi device model.
+
+### Submission comparison procedure
+
 Configure the same source, bank archive and compiler settings twice, changing
 only `NDS_MPH_SUBMIT_IMPLEMENTATION=LLE|HLE`. Keep math HLE in both arms and
 freeze each executable before changing the build selection. In the game repo:
