@@ -57,7 +57,9 @@ namespace ndsrecomp {
 //     code-timing class — instead of a runtime_code_cycles(pc) call, and
 //     condition guards call the inline arm_cond_passes_i. Emitted cycle
 //     counts and tick boundaries are unchanged.
-inline constexpr unsigned kCodegenVersion = 3;
+// 4 — optional guarded connected regions up to four pages, including local
+//     branches between coalesced members and explicit self-spin preservation.
+inline constexpr unsigned kCodegenVersion = 4;
 
 // The string `--codegen-identity` prints and the shard provider identity
 // folds. Tagged so that a hash of it can never collide with a bare integer

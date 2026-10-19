@@ -84,6 +84,17 @@ add_test(NAME codegen_golden
 # two projects configure separately.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  if(NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
+    get_filename_component(_nds_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(NDS_TEST_C_COMPILER NAMES gcc clang cc HINTS "${_nds_compiler_dir}")
+    if(NDS_TEST_C_COMPILER)
+      add_test(NAME connected_regions
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/tests/connected_regions_test.py"
+          --recompiler $<TARGET_FILE:nds_recompile>
+          --compiler "${NDS_TEST_C_COMPILER}"
+          --work "${CMAKE_CURRENT_BINARY_DIR}/connected-regions-work")
+    endif()
+  endif()
   add_test(
       NAME live_shard_identity_test
       COMMAND "${Python3_EXECUTABLE}"

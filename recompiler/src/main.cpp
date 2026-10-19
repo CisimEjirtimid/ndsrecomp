@@ -241,7 +241,8 @@ bool read_preceding_dispatch(const std::string& path, PrecedingDispatch& out) {
 SuperblockPlan build_superblocks(
         const std::vector<Function>& funcs,
         const std::unordered_set<uint64_t>& preceding_rows,
-        bool enabled) {
+        bool enabled, uint32_t region_bytes = 4096u,
+        const std::unordered_set<uint64_t>& barriers = {}) {
     SuperblockPlan plan;
     plan.leader.resize(funcs.size());
     plan.end.resize(funcs.size());
@@ -259,9 +260,10 @@ SuperblockPlan build_superblocks(
         const Function& head = funcs[first];
         const uint32_t source =
             head.source_addr ? head.source_addr : head.addr;
-        const uint32_t page = head.addr & ~0xFFFu;
-        if (source != head.addr || head.end_addr <= head.addr ||
-            uint64_t{head.end_addr} > uint64_t{page} + 4096u ||
+        const uint32_t page = head.addr & ~(region_bytes - 1u);
+        if (barriers.count(function_key(head.addr, head.mode)) ||
+            source != head.addr || head.end_addr <= head.addr ||
+            uint64_t{head.end_addr} > uint64_t{page} + region_bytes ||
             key_counts[function_key(head.addr, head.mode)] != 1u) {
             ++first;
             continue;
@@ -277,10 +279,11 @@ SuperblockPlan build_superblocks(
             if (prev.end_addr != next.addr ||
                 prev.mode != next.mode ||
                 next_source != next.addr ||
-                (next.addr & ~0xFFFu) != page ||
+                (next.addr & ~(region_bytes - 1u)) != page ||
                 next.end_addr <= next.addr ||
-                uint64_t{next.end_addr} > uint64_t{page} + 4096u ||
+                uint64_t{next.end_addr} > uint64_t{page} + region_bytes ||
                 key_counts[next_key] != 1u ||
+                barriers.count(next_key) != 0u ||
                 preceding_rows.count(next_key) != 0u)
                 break;
             ++last;
@@ -294,6 +297,32 @@ SuperblockPlan build_superblocks(
         first = last;
     }
     return plan;
+}
+
+// A build-selected native service can start inside a finder span. Preserve
+// every declared service boundary before coalescing so neither a local branch
+// nor straight fall-through can bypass its runtime binding.
+std::vector<Function> split_region_barriers(const std::vector<Function>& funcs,
+        const std::unordered_set<uint64_t>& barriers) {
+    std::vector<Function> result;
+    for (const auto& fn : funcs) {
+        std::vector<uint32_t> cuts{fn.addr, fn.end_addr};
+        for (uint64_t key : barriers) {
+            const uint32_t addr = static_cast<uint32_t>(key >> 1u);
+            if ((key & 1u) == uint64_t(fn.mode == CpuMode::Thumb) &&
+                addr > fn.addr && addr < fn.end_addr) cuts.push_back(addr);
+        }
+        std::sort(cuts.begin(), cuts.end());
+        for (std::size_t i = 1; i < cuts.size(); ++i) {
+            auto part = fn;
+            part.addr = cuts[i - 1]; part.end_addr = cuts[i];
+            if (fn.source_addr) part.source_addr += part.addr - fn.addr;
+            if (i > 1) part.name += "_region_" + std::to_string(part.addr);
+            part.has_indirect_transfer = fn.has_indirect_transfer && part.end_addr == fn.end_addr;
+            result.push_back(std::move(part));
+        }
+    }
+    return result;
 }
 
 std::vector<Function> split_functions_for_emission(
@@ -661,13 +690,22 @@ void emit_function_body(std::FILE* f, const Function& fn,
                         bool msr_fast_path,
                         const std::unordered_map<uint64_t, armv4t::InlineLeaf>*
                             inline_leaves,
-                        unsigned* inline_leaf_sites) {
+                        unsigned* inline_leaf_sites,
+                        uint32_t connected_begin = 0u,
+                        uint32_t connected_end = 0u) {
     const uint32_t step = (fn.mode == CpuMode::Thumb) ? 2u : 4u;
     armv4t::CodegenCtx ctx;
     ctx.names_by_key = &func_names_by_key;
     ctx.current_function_addr = fn.addr;
     ctx.current_function_end_addr = fn.end_addr;
     ctx.current_function_thumb = (fn.mode == CpuMode::Thumb);
+    if (connected_end) {
+        // Every member has the same ISA and belongs to this one content proof.
+        // Branches between members can therefore use the labels already in
+        // this native body, retaining normal ticks and slice/code-write exits.
+        ctx.current_function_addr = connected_begin;
+        ctx.current_function_end_addr = connected_end;
+    }
     ctx.trace_live_transfers = trace_live_transfers;
     ctx.msr_fast_path = msr_fast_path;
     ctx.inline_leaves = inline_leaves;
@@ -855,7 +893,12 @@ void emit_function_body(std::FILE* f, const Function& fn,
                      armv4t::format_ir(ins).c_str());
         bool ni = false;
         ctx.force_bx_c_return = bx_c_return_pcs.count(pc) != 0;
-        std::fputs(armv4t::ArmCodegen::emit_instr(ins, ctx, &ni).c_str(), f);
+        auto instruction_ctx = ctx;
+        // Keep b . on the runtime dispatch path. A member's symbol maps to
+        // the enclosing leader, so a direct C call here could recurse.
+        if (connected_end && ins.op == armv4t::IrOp::B && ins.branch_target == pc)
+            instruction_ctx.names_by_key = nullptr;
+        std::fputs(armv4t::ArmCodegen::emit_instr(ins, instruction_ctx, &ni).c_str(), f);
         (void)ni;  // abort path is in the emit; tracked at audit time
         pc += step;
     }
@@ -1132,7 +1175,9 @@ void write_bank_body(const std::string& dir,
                      bool msr_fast_path,
                      const std::unordered_map<uint64_t, armv4t::InlineLeaf>&
                          inline_leaves,
-                     unsigned* inline_leaf_sites) {
+                     unsigned* inline_leaf_sites,
+                     bool connected_regions,
+                     const std::unordered_set<uint64_t>& region_barriers) {
     std::unordered_map<uint64_t, std::string> name_by_key;
     // Direct C calls stay within a body shard. Cross-shard transfers use the
     // normal runtime dispatcher, which keeps shards independently compilable
@@ -1148,6 +1193,7 @@ void write_bank_body(const std::string& dir,
             if (leader < first || leader >= last) continue;
             uint64_t key = (static_cast<uint64_t>(fn.addr) << 1u) |
                 (fn.mode == CpuMode::Thumb ? 1u : 0u);
+            if (region_barriers.count(key)) continue;
             name_by_key[key] = names.fn_prefix + funcs[leader].name;
         }
     }
@@ -1220,7 +1266,9 @@ void write_bank_body(const std::string& dir,
                 !coalesced, member + 1u < block_end,
                 trace_live_transfers, msr_fast_path,
                 shard_leaves.empty() ? nullptr : &shard_leaves,
-                inline_leaf_sites);
+                inline_leaf_sites,
+                connected_regions ? fn.addr : 0u,
+                connected_regions ? funcs[block_end - 1u].end_addr : 0u);
         }
         std::fprintf(f, "}\n\n");
         if (hle) {
@@ -1257,6 +1305,8 @@ int main(int argc, char** argv) {
     bool stable_address_shards = false;
     unsigned shards = 1u;
     uint32_t max_function_bytes = 0u;
+    uint32_t connected_region_bytes = 0u;
+    std::unordered_set<uint64_t> region_barriers;
     bool msr_fast_path = true;
     // Tiny-leaf inlining budget, in guest instructions INCLUDING the
     // terminating `bx lr` (beads-yjp.67). 0 disables the pass entirely.
@@ -1297,6 +1347,28 @@ int main(int argc, char** argv) {
             std::strtoul(next(), nullptr, 0));
         else if (a == "--max-function-bytes") max_function_bytes =
             static_cast<uint32_t>(std::strtoul(next(), nullptr, 0));
+        else if (a == "--connected-region-bytes") {
+            const std::string value = next();
+            char* end = nullptr;
+            const auto parsed = std::strtoul(value.c_str(), &end, 0);
+            if (value.empty() || !end || *end ||
+                (parsed != 4096u && parsed != 8192u && parsed != 16384u)) {
+                std::fprintf(stderr, "--connected-region-bytes accepts 4096, 8192 or 16384\n");
+                return 2;
+            }
+            connected_region_bytes = static_cast<uint32_t>(parsed);
+        }
+        else if (a == "--region-barrier") {
+            const std::string value = next();
+            char* end = nullptr;
+            const auto parsed = std::strtoull(value.c_str(), &end, 0);
+            if (value.empty() || !end || *end || parsed > 0xFFFFFFFFull ||
+                (!(parsed & 1u) && (parsed & 3u))) {
+                std::fprintf(stderr, "--region-barrier requires an aligned ARM address or a Thumb address with bit 0 set\n");
+                return 2;
+            }
+            region_barriers.insert((parsed & ~1ull) * 2u + (parsed & 1u));
+        }
         else if (a == "--no-msr-fast-path") msr_fast_path = false;
         else if (a == "--inline-leaf-max-insns") inline_leaf_max_insns =
             static_cast<unsigned>(std::strtoul(next(), nullptr, 0));
@@ -1320,6 +1392,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "--coalesce-fallthroughs requires --validate-live-bytes and "
             "does not support --hle-manifest\n");
+        return 2;
+    }
+    if ((connected_region_bytes || !region_barriers.empty()) && !coalesce_fallthroughs) {
+        std::fprintf(stderr, "--connected-region-bytes requires --coalesce-fallthroughs\n");
         return 2;
     }
     if (prune_preceding_owned &&
@@ -1602,8 +1678,18 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (!region_barriers.empty()) {
+            funcs = split_region_barriers(funcs, region_barriers);
+            std::stable_sort(funcs.begin(), funcs.end(), [&](const Function& a, const Function& b) {
+                if (stable_address_shards && emission_addr(a) != emission_addr(b))
+                    return emission_addr(a) < emission_addr(b);
+                if (a.addr != b.addr) return a.addr < b.addr;
+                return a.mode < b.mode;
+            });
+        }
         const SuperblockPlan superblocks = build_superblocks(
-            funcs, preceding.keys, coalesce_fallthroughs);
+            funcs, preceding.keys, coalesce_fallthroughs,
+            connected_region_bytes ? connected_region_bytes : 4096u, region_barriers);
         if (coalesce_fallthroughs)
             std::printf("[emit] coalesced %zu fallthrough edges; "
                         "preceding rows=%zu\n",
@@ -1611,11 +1697,12 @@ int main(int argc, char** argv) {
         unsigned emitted_shards = 0u;
         unsigned inline_leaf_count = 0u;
         unsigned inline_leaf_sites = 0u;
-        const std::unordered_map<uint64_t, armv4t::InlineLeaf> inline_leaves =
+        std::unordered_map<uint64_t, armv4t::InlineLeaf> inline_leaves =
             build_inline_leaves(funcs, superblocks, bin.data(), bin.size(),
                                 cfg.program.load_address, names,
                                 inline_leaf_max_insns, hle_routines,
                                 pruned_keys, &inline_leaf_count);
+        for (uint64_t barrier : region_barriers) inline_leaves.erase(barrier);
         if (!dispatch_only) {
             write_bank_header(out_dir, funcs, names);
             if (shards == 0u) shards = 1u;
@@ -1639,7 +1726,8 @@ int main(int argc, char** argv) {
                                 hle_routines,
                                 msr_fast_path,
                                 inline_leaves,
-                                &inline_leaf_sites);
+                                &inline_leaf_sites,
+                                connected_region_bytes != 0u, region_barriers);
                 ++emitted_shards;
             };
             if (stable_address_shards) {

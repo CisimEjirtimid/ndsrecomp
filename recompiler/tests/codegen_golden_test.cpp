@@ -219,6 +219,12 @@ int main(int argc, char** argv) {
                              "--coalesce-fallthroughs"},
         {"live_unsafe",   9, "--shards 1 --validate-live-bytes "
                              "--unsafe-live-direct-calls"},
+        {"connected",     9, "--shards 3 --stable-address-shards "
+                             "--max-function-bytes 64 --validate-live-bytes "
+                             "--coalesce-fallthroughs --connected-region-bytes 16384"},
+        {"barriers",      9, "--shards 1 --validate-live-bytes "
+                             "--validated-live-direct-calls --coalesce-fallthroughs "
+                             "--connected-region-bytes 16384 --region-barrier 0x02000020"},
         {"arm7_static",   7, "--shards 1"},
         {"arm7_closure",  7, "--shards 1 --stable-address-shards "
                              "--max-function-bytes 512 --validate-live-bytes "
