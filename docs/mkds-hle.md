@@ -1,8 +1,11 @@
 # MKDS vector HLE
 
-The integrated MKDS HLE consists of three byte-identical MPH SDK operations:
+The integrated MKDS HLE consists of byte-identical MPH SDK operations:
 Q12 scale/add (`0x02147FD8`), cross product (`0x021483A0`) and matrix transform
-plus translation (`0x02147288`). `hle_vector_math.h` shares their native kernels;
+plus translation (`0x02147288`) and affine matrix concatenation (`0x0214733C`).
+The concatenation's complete 544-byte AMCE0 fingerprint matches the MPH routine
+already covered by the original-instruction differential checks, including
+exact in-place input/output aliases. `hle_vector_math.h` shares their native kernels;
 each game keeps its own ROM/code identity checks and counters.
 
 `NDS_MKDS_IMPLEMENTATION=HLE|LLE` is a developer build-time choice. The generic
@@ -53,3 +56,24 @@ ordering or other gameplay; the cause and full impact are not established.
 Math-only samples matched the baseline screenshots, but atomic math completion
 changes observable device/interrupt timing and retains compatibility risk.
 Neither experiment is approved for the default build by these measurements.
+
+## Native GL Windows candidate (October 18)
+
+The candidate selects `NDS_ACCELERATED_RENDERER=OPENGL`, MKDS vector/affine HLE,
+and `NDS_GX_COMMAND_CACHE=ON`. The latter exposes the existing guarded Main-RAM
+FIFO decoder cache and exact integer viewport cache independently of MPH's
+title-specific CPU submission replacement. It retains page/content/parser
+proofs, reset/load invalidation, DMA slice/request/stall boundaries and the
+portable paths. The default is OFF; MPH submission HLE still enables its
+existing implementation. Diagnostics: `gx_optimizations` and `gpu3d_backend`.
+
+MKDS's guest submission routine remains unchanged. The deferred MKDS division,
+normalization and atomic submission experiments are not selected, and no MPH
+code addresses are used for MKDS. Native GL presentation uses the independent
+integer capture reference described in `native-gl-renderer.md`. Software
+rendering and the `NDS_MKDS_IMPLEMENTATION=LLE` / cache-OFF build choices remain.
+
+Budget: one matched 600-vblank GCN Luigi Circuit sample on the i5-4670/GTX760
+SERVER, comparing the last public Windows release with the complete candidate.
+Each arm prepares its own matching-build state. No cross-build state loads,
+PGO, platform/route matrix or online-compatibility qualification is implied.

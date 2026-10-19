@@ -2994,7 +2994,7 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
         // units per FIFO-level request (melonDS DMA::Start IterCount cap).
         uint32_t request_units = gamecard ? 1u : gxfifo ? 112u : UINT32_MAX;
         while (d.remaining && g_runtime_cycles < target_cycles) {
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
             // A native stream joins Main RAM directly to decoded GXFIFO
             // ingress. Keep this scheduler slice, request limit, per-word bus
             // time, channel priority and first actual FIFO stall intact.

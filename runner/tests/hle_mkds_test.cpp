@@ -64,13 +64,29 @@ void math_contracts() {
     require(word(base) == 110 && word(base + 8) == 112, "affine transform alias");
     return_contract();
 }
+void matrix_contract() {
+    reset(0x0214733C);
+    for (unsigned i = 0; i < 3; ++i) {
+        word(base + i * 16) = 4096;
+        word(base + 64 + i * 16) = 4096;
+        word(base + 36 + i * 4) = 7 + i;
+        word(base + 64 + 36 + i * 4) = 100 * (i + 1);
+    }
+    g_cpu.R[0] = base; g_cpu.R[1] = base + 64; g_cpu.R[2] = base;
+    mkds_hle::matrix_concat();
+    require(word(base) == 4096 && word(base + 16) == 4096 &&
+            word(base + 32) == 4096 && word(base + 36) == 107 &&
+            word(base + 40) == 208 && word(base + 44) == 309 && ticks == 1,
+            "matrix concatenation in place");
+    return_contract();
+}
 std::vector<uint8_t> read_file(const char* path) {
     std::ifstream f(path, std::ios::binary); require(bool(f), "fixture image missing");
     return {std::istreambuf_iterator<char>(f), {}};
 }
 void bindings(const char* main_path) {
     main_code = read_file(main_path);
-    for (uint32_t pc : {0x02147FD8u, 0x021483A0u, 0x02147288u}) {
+    for (uint32_t pc : {0x02147FD8u, 0x021483A0u, 0x02147288u, 0x0214733Cu}) {
         const auto binding = mkds_hle::resolve(NDS_ARM9, pc, false);
         require(binding.function && binding.validation, "exact resident routine did not bind");
         require(binding.validation->size >= 24, "short generated prefix used as whole proof");
@@ -81,6 +97,10 @@ void bindings(const char* main_path) {
         have_provenance = true;
     }
     main_code[0x147FD8 + 92] ^= 1;
+    main_code[0x14733C + 540] ^= 1;
+    require(!mkds_hle::resolve(NDS_ARM9, 0x0214733C, false).function,
+            "changed full matrix suffix accepted");
+    main_code[0x14733C + 540] ^= 1;
     require(!mkds_hle::resolve(NDS_ARM9, 0x02147FD8, false).function,
             "changed full-operation suffix accepted");
     main_code[0x147FD8 + 92] ^= 1;
@@ -128,6 +148,7 @@ int main(int argc, char** argv) {
         require(mkds_hle::initialize("691e00d9a5dd80b04f80cc7559503e8b06848785"), "MKDS rejected");
         require(mkds_hle::statistics().group_mask == 1, "only vector HLE is integrated");
         math_contracts();
+        matrix_contract();
         if (argc == 2) bindings(argv[1]);
         else require(argc == 1, "usage: hle_mkds_test [private-arm9.bin]");
         std::puts("[hle_mkds_test] PASS"); return 0;

@@ -81,22 +81,6 @@ void cross_product() { ++counters.cross_product_calls; nds_hle::cross_product();
 void transform_translate() { ++counters.transform_translate_calls; nds_hle::transform_translate(); }
 void matrix_concat() {
     ++counters.matrix_concat_calls;
-    const uint32_t a = g_cpu.R[0], b = g_cpu.R[1], out = g_cpu.R[2];
-    // One complete affine job. Snapshotting the two inputs supports the SDK's
-    // exact in-place aliases without guest stack traffic or intermediate ticks.
-    std::array<uint32_t, 12> left{}, right{}, result{};
-    for (unsigned i = 0; i < 12; ++i) {
-        left[i] = nds_hle::load(a + i * 4u);
-        right[i] = nds_hle::load(b + i * 4u);
-    }
-    for (unsigned row = 0; row < 4; ++row)
-        for (unsigned col = 0; col < 3; ++col) {
-            const auto sum = nds_hle::product(left[row * 3], right[col]) +
-                nds_hle::product(left[row * 3 + 1], right[col + 3]) +
-                nds_hle::product(left[row * 3 + 2], right[col + 6]);
-            result[row * 3 + col] = nds_hle::q12(sum) + (row == 3 ? right[col + 9] : 0u);
-        }
-    for (unsigned i = 0; i < 12; ++i) nds_hle::store(out + i * 4u, result[i]);
-    nds_hle::finish(384u);
+    nds_hle::matrix_concat();
 }
 } // namespace mph_hle

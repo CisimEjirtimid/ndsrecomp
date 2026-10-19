@@ -1368,6 +1368,13 @@ std::string handle(const std::string& line) {
                ",\"frames\":" + std::to_string(stats.frames) + "}";
     }
     if (cmd == "hle_heat") return nds_hle_profile_json();
+    if (cmd == "gx_optimizations") {
+#if defined(NDS_GX_COMMAND_CACHE)
+        return std::string("{\"enabled\":true,\"cache\":") + nds_gpu3d_command_batch_json() + "}";
+#else
+        return "{\"enabled\":false}";
+#endif
+    }
     if (cmd == "mph_submit") {
 #if defined(NDS_MPH_SUBMIT_HLE)
         const auto c = mph_submit::statistics();
@@ -1413,7 +1420,8 @@ std::string handle(const std::string& line) {
             ",\"group_mask\":" + std::to_string(c.group_mask) +
             ",\"scale_add\":" + std::to_string(c.scale_add) +
             ",\"cross_product\":" + std::to_string(c.cross_product) +
-            ",\"transform_translate\":" + std::to_string(c.transform_translate) + "}";
+            ",\"transform_translate\":" + std::to_string(c.transform_translate) +
+            ",\"matrix_concat\":" + std::to_string(c.matrix_concat) + "}";
 #else
         return "{\"implementation\":\"LLE\"}";
 #endif

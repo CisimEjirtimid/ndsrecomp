@@ -30,6 +30,8 @@ set(NDS_ACCELERATED_RENDERER "COMPUTE" CACHE STRING
     "Developer build selection: COMPUTE or OPENGL native rasterization")
 set_property(CACHE NDS_ACCELERATED_RENDERER PROPERTY STRINGS COMPUTE OPENGL)
 option(NDS_BUILD_NATIVE_GL_TESTS "Build focused SDL3/native-GL context checks" OFF)
+option(NDS_GX_COMMAND_CACHE
+    "Use guarded Main-RAM FIFO ingress and exact integer projection reuse" OFF)
 if(NOT NDS_ACCELERATED_RENDERER MATCHES "^(COMPUTE|OPENGL)$")
     message(FATAL_ERROR "NDS_ACCELERATED_RENDERER must be COMPUTE or OPENGL")
 endif()
@@ -70,6 +72,9 @@ if(NOT NDS_MKDS_IMPLEMENTATION MATCHES "^(LLE|HLE)$")
     message(FATAL_ERROR "NDS_MKDS_IMPLEMENTATION must be LLE or HLE")
 endif()
 set(NDS_BUILD_VARIANT "")
+if(NDS_GX_COMMAND_CACHE)
+    set(NDS_BUILD_VARIANT "gx-cache-v1")
+endif()
 if(NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
     set(NDS_BUILD_VARIANT "mph-submit-hle-v3")
 endif()
@@ -533,6 +538,12 @@ if(NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
         "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,nds_runner>:NDS_MPH_SUBMIT_HLE=1>")
 endif()
 message(STATUS "MPH submit implementation: ${NDS_MPH_SUBMIT_IMPLEMENTATION}")
+if(NDS_GX_COMMAND_CACHE OR NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
+    # Shared device work; independent of any title-specific CPU replacement.
+    set_property(SOURCE src/io.cpp src/gpu3d.cpp src/debug_server.cpp
+        APPEND PROPERTY COMPILE_DEFINITIONS
+        "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,nds_runner>:NDS_GX_COMMAND_CACHE=1>")
+endif()
 if(NDS_MKDS_IMPLEMENTATION STREQUAL "HLE")
     target_sources(nds_runner PRIVATE src/hle_mkds.cpp)
     target_compile_definitions(nds_runner PRIVATE NDS_MKDS_HLE=1

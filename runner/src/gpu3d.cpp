@@ -28,7 +28,7 @@
 
 #include "NDS.h"
 #include "GPU3D_Soft.h"
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
 #include "GPU3D_CommandBatch.h"
 #endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
@@ -57,7 +57,7 @@ void latch_capture_reference() {
         g_capture_reference.Reset();
 }
 #endif
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
 melonDS::CommandBatch::Cache g_command_cache;
 #endif
 
@@ -1044,7 +1044,7 @@ bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
 #if defined(NDS_USE_NATIVE_GL)
     g_capture_reference.Reset();
 #endif
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
     g_command_cache.clear(); // restored RAM can reuse old generation numbers
 #endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
@@ -1106,12 +1106,12 @@ void nds_gpu3d_reset() {
 #if defined(NDS_USE_NATIVE_GL)
     g_capture_reference.Reset();
 #endif
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
     g_command_cache.clear();
 #endif
     g_nds.ARM9Timestamp = 0;
     g_nds.GPU.GPU3D.Reset();
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
     g_nds.GPU.GPU3D.NativeProjectionCache.enabled = true;
 #endif
     // Match the retail/melonDS POWCNT1 reset value 0x820F.
@@ -1178,7 +1178,7 @@ void nds_gpu3d_write(uint32_t addr, uint32_t value, uint32_t width) {
 
 uint32_t nds_gpu3d_command_batch(uint32_t source, uint32_t words,
                                uint32_t offset, uint32_t count, bool stop_on_stall) {
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
     using namespace melonDS::CommandBatch;
     if (!count) return 0;
     auto& gpu = g_nds.GPU.GPU3D;
@@ -1207,7 +1207,7 @@ uint32_t nds_gpu3d_command_batch(uint32_t source, uint32_t words,
 }
 
 const char* nds_gpu3d_command_batch_json() {
-#if defined(NDS_MPH_SUBMIT_HLE)
+#if defined(NDS_GX_COMMAND_CACHE)
     static char text[384];
     const auto c = g_command_cache.statistics;
     const auto p = g_nds.GPU.GPU3D.NativeProjectionCache.statistics;

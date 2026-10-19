@@ -13,7 +13,7 @@ struct Binding {
     uint32_t entry, start, size;
     const char* sha1;
     Function function;
-    std::array<uint8_t, 180> bytes{};
+    std::array<uint8_t, 544> bytes{};
     NdsStaticValidation validation{};
 };
 // ROM hashes only; the proof bytes are read from the verified resident image.
@@ -21,12 +21,13 @@ Binding bindings[] = {
     {0x02147FD8, 0x02147FD8, 96, "a62a720989cd408241a1acc35520b93d866bf7df", scale_add},
     {0x021483A0, 0x021483A0, 156, "8a97f6bdacd40175ea4f577788a82635a8057984", cross_product},
     {0x02147288, 0x02147288, 180, "fe182d57e45fd6086b43f0b98ac689d14b815365", transform_translate},
+    {0x0214733C, 0x0214733C, 544, "33407f601fee3cc8d211ff511f571e141ebec689", matrix_concat},
 };
 } // namespace
 
 bool initialize(const char* rom_sha1) {
     counts = {};
-    counts.group_mask = 1; // only the three vector kernels are integrated
+    counts.group_mask = 1; // vector/affine kernels; no hardware math or submit replacement
     counts.rom_supported = rom_sha1 &&
         std::strcmp(rom_sha1, "691e00d9a5dd80b04f80cc7559503e8b06848785") == 0;
     return counts.rom_supported;
@@ -37,7 +38,7 @@ Replacement resolve(NdsCpu cpu, uint32_t pc, bool thumb) {
     if (!counts.rom_supported || cpu != NDS_ARM9 || thumb) return {};
     for (auto& b : bindings) {
         if (!b.function || pc != b.entry) continue;
-        std::array<uint8_t, 180> live{};
+        std::array<uint8_t, 544> live{};
         if (!bus_range_has_write_provenance(b.start, b.size) ||
             !bus_debug_copy(0, b.start, live.data(), b.size) ||
             gba::sha1(live.data(), b.size).hex() != b.sha1)
@@ -54,5 +55,6 @@ Replacement resolve(NdsCpu cpu, uint32_t pc, bool thumb) {
 void scale_add() { ++counts.scale_add; nds_hle::scale_add(); }
 void cross_product() { ++counts.cross_product; nds_hle::cross_product(); }
 void transform_translate() { ++counts.transform_translate; nds_hle::transform_translate(); }
+void matrix_concat() { ++counts.matrix_concat; nds_hle::matrix_concat(); }
 
 } // namespace mkds_hle

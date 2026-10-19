@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bit>
+#include <array>
 #include <cstdint>
 #include "runtime_arm.h"
 
@@ -84,6 +85,25 @@ inline void cross_product() {
     if ((~(low ^ 0x800u) & (low ^ rounded)) & CPSR_N_BIT) flags |= CPSR_V_BIT;
     g_cpu.cpsr = (g_cpu.cpsr & ~(CPSR_N_BIT | CPSR_Z_BIT | CPSR_C_BIT | CPSR_V_BIT)) | flags;
     finish(160u);
+}
+
+inline void matrix_concat() {
+    const uint32_t a = g_cpu.R[0], b = g_cpu.R[1], out = g_cpu.R[2];
+    // Snapshot both inputs for the SDK's exact in-place aliases.
+    std::array<uint32_t, 12> left{}, right{}, result{};
+    for (unsigned i = 0; i < 12; ++i) {
+        left[i] = load(a + i * 4u);
+        right[i] = load(b + i * 4u);
+    }
+    for (unsigned row = 0; row < 4; ++row)
+        for (unsigned col = 0; col < 3; ++col) {
+            const auto sum = product(left[row * 3], right[col]) +
+                product(left[row * 3 + 1], right[col + 3]) +
+                product(left[row * 3 + 2], right[col + 6]);
+            result[row * 3 + col] = q12(sum) + (row == 3 ? right[col + 9] : 0u);
+        }
+    for (unsigned i = 0; i < 12; ++i) store(out + i * 4u, result[i]);
+    finish(384u);
 }
 
 inline void transform_translate() {

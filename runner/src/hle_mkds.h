@@ -12,6 +12,7 @@ struct Statistics {
     bool rom_supported = false;
     uint32_t group_mask = 0; // VECTOR=1; compiled choice
     uint64_t scale_add = 0, cross_product = 0, transform_translate = 0;
+    uint64_t matrix_concat = 0;
 };
 bool initialize(const char* rom_sha1);
 Statistics statistics();
@@ -21,4 +22,5 @@ Replacement resolve(NdsCpu cpu, uint32_t pc, bool thumb);
 void scale_add();
 void cross_product();
 void transform_translate();
+void matrix_concat();
 } // namespace mkds_hle
