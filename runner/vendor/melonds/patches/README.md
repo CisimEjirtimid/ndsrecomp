@@ -11,6 +11,17 @@ patch here against the committed file, or re-copy from
 `ndsref/third_party/melonDS` (pinned tag `1.0rc`,
 `e3fa6f4224e0d706df3ee262ae41cfb0deadc593`) and diff.
 
+## 0022-native-gl-runner-adapter.patch
+
+`GPU3D_OpenGL.{cpp,h}`: import the pinned native GL rasterizer and adapt its
+flat texture/palette inputs, 256..448-wide surfaces, RGB6/alpha5 and packed
+polygon-ID transport, normalized HD output and resource destruction. The
+upstream shaders remain byte-identical. Clear-bitmap rendering, which is
+unimplemented upstream in this backend, uses the retained software renderer.
+`GPU3D_OpenGL_Output.h` supplies the new output shaders. The independent
+`CaptureReference` adapter anchors guest VRAM capture to a frozen integer
+software job; it does not read the native output or internal resolution.
+
 ## 0001-wifi-ap-identity.patch
 
 `src/WifiAP.cpp`: changes the hardcoded AP identity from melonDS's default

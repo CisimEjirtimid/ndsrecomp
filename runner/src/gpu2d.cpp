@@ -1676,7 +1676,11 @@ void latch_line(int y, LineJob& job) {
         job.engine_active[0] && !line_forceblank(job, 0);
     if (engine_a_renders &&
         line_general_path(job.unit[0], 0, job.bg0_3d, job.cap)) {
-        const uint32_t* const line3d = nds_gpu3d_line(y);
+        const bool capture_uses_3d = job.cap &&
+            ((job.unit[0].capture >> 29) & 3u) != 1u &&
+            ((job.unit[0].capture & (1u << 24)) || job.bg0_3d);
+        const uint32_t* const line3d = capture_uses_3d
+            ? nds_gpu3d_capture_line(y) : nds_gpu3d_line(y);
         if (line3d) {
             std::copy_n(line3d, 256, job.line3d_storage.data());
             job.line3d = job.line3d_storage.data();

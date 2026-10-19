@@ -39,6 +39,9 @@ bool nds_gpu3d_renderer_requires_compute();
 // renderer selected. use_soft_renderer() explicitly restores the fallback.
 bool nds_gpu3d_use_compute_renderer();
 bool nds_gpu3d_compute_renderer_built();
+// The historical compute API owns the common accelerated transport. This
+// reports the backend selected at build time, including native GL builds.
+const char* nds_gpu3d_compiled_accelerated_backend();
 bool nds_gpu3d_compute_runtime_failed();
 // Host presentation handle for the accelerated renderer's integer
 // RGB6/alpha5 surface. Valid only while its OpenGL context is current.
@@ -144,6 +147,8 @@ void nds_gpu3d_start_frame();
 // RenderXPos horizontal scroll; zero-filled while AbortFrame is set). The
 // returned 256-entry buffer is valid until the next call.
 const uint32_t* nds_gpu3d_line(int line);
+// Guest VRAM capture uses the portable raster in native-GL builds.
+const uint32_t* nds_gpu3d_capture_line(int line);
 
 // Opt-in host-only widened raster surface. The native line API above always
 // returns the centered 256-pixel hardware viewport for the faithful 2D

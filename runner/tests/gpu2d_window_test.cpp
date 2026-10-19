@@ -18,6 +18,8 @@ std::array<uint8_t, 0x400> g_palette{};
 std::array<uint8_t, 0x400> g_oam{};
 NdsVramRendererView g_view{};
 std::array<uint32_t, 448> g_3d_line{};
+std::array<uint32_t, 256> g_capture_reference_line{};
+bool g_capture_reference_override = false;
 std::array<uint8_t, 0x20000> g_capture_bank{};
 bool g_lcdc_mapped = false;
 uint16_t g_3d_output_width = 256;
@@ -385,7 +387,8 @@ struct CaptureRun {
     uint64_t staged_captures = 0;
 };
 
-void run_capture_frame(uint32_t capture_size, CaptureRun& out) {
+void run_capture_frame(uint32_t capture_size, CaptureRun& out,
+                       uint32_t source = 0, bool bg3d = false) {
     nds_gpu2d_reset();
     g_capture_bank.fill(0);
     g_palette.fill(0);
@@ -399,10 +402,10 @@ void run_capture_frame(uint32_t capture_size, CaptureRun& out) {
         g_3d_line[i] = static_cast<uint32_t>((i * 0x00010203u) | 0x1F000000u);
 
     Unit& u = g_unit[0];
-    u.dispcnt = 0x00010000u;   // display mode 1 (composite), BG mode 0
+    u.dispcnt = 0x00010000u | (bg3d ? 0x108u : 0u);
     u.master_bright = 0;
     // Enable + size + source A = composite, dest bank 0, no offsets.
-    u.capture = 0x80000000u | (capture_size << 20);
+    u.capture = 0x80000000u | (capture_size << 20) | source;
     g_unit[1].dispcnt = 0x00010000u;
 
     nds_gpu2d_start_frame();
@@ -418,6 +421,22 @@ void run_capture_frame(uint32_t capture_size, CaptureRun& out) {
     // frame wrap, which this fixture does not reach.
     std::copy_n(g_fb[g_front ^ 1][0].data(), 256 * 192, out.top.data());
     std::copy_n(g_fb[g_front ^ 1][1].data(), 256 * 192, out.bottom.data());
+}
+
+bool test_capture_uses_reference() {
+    nds_gpu2d_set_threaded(false, 1);
+    g_capture_reference_line.fill(0x1F00003Fu);
+    g_capture_reference_override = true;
+    bool ok = true;
+    // Both composited engine-A source and direct 3D source must use the
+    // portable pixels. Presentation's unrelated pattern must not leak in.
+    for (uint32_t source : {0u, 1u << 24}) {
+        CaptureRun run{};
+        run_capture_frame(3, run, source, true);
+        ok &= run.bank[0] == 0x1F && run.bank[1] == 0x80;
+    }
+    g_capture_reference_override = false;
+    return ok;
 }
 
 bool test_capture_serializes_and_matches() {
@@ -772,6 +791,9 @@ uint8_t* nds_vram_bank_data(unsigned) { return g_capture_bank.data(); }
 void nds_vram_note_capture_write() {}
 uint32_t nds_video_read(int, uint32_t, uint32_t) { return 0; }
 const uint32_t* nds_gpu3d_line(int) { return g_3d_line.data(); }
+const uint32_t* nds_gpu3d_capture_line(int) {
+    return g_capture_reference_override ? g_capture_reference_line.data() : g_3d_line.data();
+}
 uint16_t nds_gpu3d_output_width() { return g_3d_output_width; }
 const uint32_t* nds_gpu3d_wide_line(int) { return g_3d_line.data(); }
 const uint32_t* nds_gpu3d_wide_attr_line(int) { return g_3d_line.data(); }
@@ -799,5 +821,6 @@ int main() {
     if (!test_adaptive_window_x()) return 12;
     if (!test_adaptive_low_polygon_perspective_stays_wide()) return 13;
     if (!test_adaptive_windowed_scene_composites_wide()) return 14;
+    if (!test_capture_uses_reference()) return 15;
     return 0;
 }

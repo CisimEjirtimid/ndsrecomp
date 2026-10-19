@@ -1385,6 +1385,13 @@ std::string handle(const std::string& line) {
         return "{\"implementation\":\"LLE\"}";
 #endif
     }
+    if (cmd == "gpu3d_backend") {
+        return std::string("{\"compiled_accelerated_backend\":\"") +
+            nds_gpu3d_compiled_accelerated_backend() + "\",\"accelerated_active\":" +
+            std::to_string(nds_gpu3d_compute_output_texture() != 0) +
+            ",\"internal_scale\":" +
+            std::to_string(nds_gpu3d_internal_scale()) + "}";
+    }
     if (cmd == "mph_math") {
 #if defined(NDS_MPH_MATH_HLE)
         const auto counts = mph_hle::statistics();

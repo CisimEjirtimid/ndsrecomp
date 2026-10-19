@@ -622,7 +622,8 @@ bool nds_compute_host_start(SDL_Window* presentation_window)
     }
     if (g_visible) SDL_GL_SetSwapInterval(0);
     g_active = true;
-    std::fprintf(stderr, "[gpu3d] renderer: OpenGL 4.3 compute\n");
+    std::fprintf(stderr, "[gpu3d] renderer: %s\n",
+                 nds_gpu3d_compiled_accelerated_backend());
     return true;
 }
 

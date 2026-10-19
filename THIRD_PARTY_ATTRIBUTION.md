@@ -26,7 +26,7 @@ repositories under their own terms, and are MIT for the same reason.
 
 A third group of files is neither: `runner/vendor/melonds/`,
 `runner/src/melonds_compute/`, `runner/src/frontend.cpp`,
-`runner/tests/gx_command_batch_test.cpp`, and `oracle/patches/`
+`runner/tests/gx_command_batch_test.cpp`, `runner/tests/native_gl_test.cpp`, and `oracle/patches/`
 are derivative works of melonDS and are under **GPL-3.0-or-later**, with the
 license text in [`LICENSE-GPL`](LICENSE-GPL). That includes the
 project-written shim headers and interface slices inside them, which reproduce
@@ -91,7 +91,7 @@ remains a device model, not HLE).
 - Vendored unmodified from tag `1.0rc` (`src/` paths, byte-identical):
   `FIFO.h`, `types.h`, `Savestate.h`, `Savestate.cpp`,
   `NonStupidBitfield.h`, `GPU3D_Texcache.cpp`, `GPU3D_TexcacheOpenGL.h`,
-  `OpenGLSupport.h`, and `PlatformOGL.h`, plus
+  `OpenGLSupport.h`, `PlatformOGL.h`, and `GPU3D_OpenGL_shaders.h`, plus
   `xxhash/xxhash.c`, `xxhash/xxhash.h`, and
   `frontend/glad/{glad.c,glad.h,khrplatform.h}` stored locally under
   `runner/vendor/melonds/glad/`.
@@ -123,6 +123,14 @@ remains a device model, not HLE).
   minimal interface slice the vendored units consume; as derived interfaces
   they are likewise GPL-3.0-or-later. The bridge `runner/src/gpu3d.cpp`
   implements them against the runner's own device models.
+- `GPU3D_OpenGL.cpp` and `GPU3D_OpenGL.h` import the native rasterizer from
+  the same pinned `1.0rc` commit, `e3fa6f4224e0d706df3ee262ae41cfb0deadc593`.
+  Applied patch `0022` adapts its flat VRAM inputs, widened surfaces, packed
+  RGB6/alpha5 and polygon-ID output, HD surface and clear-bitmap fallback.
+  `GPU3D_OpenGL_Output.h` and `melonds_compute/CaptureReference.{h,cpp}` are
+  project-written GPL-3.0-or-later adapters. The native renderer remains an
+  experimental build selection; guest VRAM capture uses the retained integer
+  software rasterizer independently of the native host output.
 - `GPU3D_CommandBatch.h` adapts the packed-word protocol from the same pinned
   `GPU3D::WriteToGXFIFO` into a bounded, generation-checked decoded-command
   cache. It is GPL-3.0-or-later with the melonDS copyright retained. It caches

@@ -1458,14 +1458,16 @@ int main(int argc, char** argv) {
     if (renderer_policy == NdsGpu3dRendererPolicy::Invalid) {
         std::fprintf(stderr,
                      "invalid NDS_3D_RENDERER "
-                     "(expected auto, soft, or compute)\n");
+                     "(expected auto, soft, or %s)\n",
+                     nds_gpu3d_compiled_accelerated_backend());
         return 2;
     }
     if (renderer_policy == NdsGpu3dRendererPolicy::Compute &&
         !nds_gpu3d_compute_renderer_built()) {
         std::fprintf(stderr,
-            "NDS_3D_RENDERER=compute requested but this runner was "
-            "built without NDS_ENABLE_COMPUTE_RENDERER\n");
+            "NDS_3D_RENDERER=%s requested but this runner was "
+            "built without NDS_ENABLE_COMPUTE_RENDERER\n",
+            nds_gpu3d_compiled_accelerated_backend());
         return 2;
     }
     const bool compute_preferred =
@@ -1473,7 +1475,7 @@ int main(int argc, char** argv) {
         nds_gpu3d_compute_renderer_built();
     std::fprintf(stderr, "[gpu3d] renderer policy: %s (preferred: %s)\n",
                  nds_gpu3d_renderer_policy_name(renderer_policy),
-                 compute_preferred ? "OpenGL 4.3 compute"
+                 compute_preferred ? nds_gpu3d_compiled_accelerated_backend()
                                    : "threaded software");
     for (const char* name : {
              "NDS_COMPUTE_READBACK_OVERLAP",

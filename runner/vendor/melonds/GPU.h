@@ -61,6 +61,10 @@ public:
     alignas(u64) u8 VRAMFlat_Texture[512*1024] {};
     alignas(u64) u8 VRAMFlat_TexPal[128*1024] {};
 
+    // Private reference-capture jobs own immutable texture views. Their
+    // coherence calls must never pull newer live VRAM into the latched job.
+    bool FrozenTextureViews = false;
+
     template<typename T>
     T ReadVRAMFlat_Texture(u32 addr) const
     {

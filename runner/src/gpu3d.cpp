@@ -32,13 +32,31 @@
 #include "GPU3D_CommandBatch.h"
 #endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
+#if defined(NDS_USE_NATIVE_GL)
+#include "GPU3D_OpenGL.h"
+#include "melonds_compute/CaptureReference.h"
+using NdsAcceleratedRenderer = melonDS::GLRenderer;
+#else
 #include "GPU3D_Compute.h"
+using NdsAcceleratedRenderer = melonDS::ComputeRenderer;
+#endif
 #include "ComputeHost.h"
 #endif
 
 namespace {
 
 melonDS::NDS g_nds;
+#if defined(NDS_USE_NATIVE_GL)
+// Survives host renderer/HD-scale reconstruction; only guest reset/load or a
+// new guest render job replaces it.
+melonDS::CaptureReference g_capture_reference;
+void latch_capture_reference() {
+    if (g_nds.GPU.GPU3D.IsRendererAccelerated())
+        g_capture_reference.Latch(g_nds.GPU);
+    else
+        g_capture_reference.Reset();
+}
+#endif
 #if defined(NDS_MPH_SUBMIT_HLE)
 melonDS::CommandBatch::Cache g_command_cache;
 #endif
@@ -460,6 +478,7 @@ void NDS::GXFIFOUnstall() { nds_gxfifo_set_stall(false); }
 
 bool GPU::MakeVRAMFlat_TextureCoherent(
     NonStupidBitField<512*1024/VRAMDirtyGranularity>& dirty) noexcept {
+    if (FrozenTextureViews) return false;
     const uint64_t gen = nds_vram_texture_generation();
     if (gen == g_texture_flat_gen) return false;
     g_texture_flat_gen = gen;
@@ -481,6 +500,7 @@ bool GPU::MakeVRAMFlat_TextureCoherent(
 
 bool GPU::MakeVRAMFlat_TexPalCoherent(
     NonStupidBitField<128*1024/VRAMDirtyGranularity>& dirty) noexcept {
+    if (FrozenTextureViews) return false;
     const uint64_t gen = nds_vram_texture_generation();
     if (gen == g_texpal_flat_gen) return false;
     g_texpal_flat_gen = gen;
@@ -618,7 +638,7 @@ NdsGpu3dRendererPolicy nds_gpu3d_renderer_policy() {
         return NdsGpu3dRendererPolicy::Auto;
     if (std::strcmp(value, "soft") == 0)
         return NdsGpu3dRendererPolicy::Soft;
-    if (std::strcmp(value, "compute") == 0)
+    if (std::strcmp(value, nds_gpu3d_compiled_accelerated_backend()) == 0)
         return NdsGpu3dRendererPolicy::Compute;
     return NdsGpu3dRendererPolicy::Invalid;
 }
@@ -628,7 +648,7 @@ const char* nds_gpu3d_renderer_policy_name(
     switch (policy) {
         case NdsGpu3dRendererPolicy::Auto: return "auto";
         case NdsGpu3dRendererPolicy::Soft: return "soft";
-        case NdsGpu3dRendererPolicy::Compute: return "compute";
+        case NdsGpu3dRendererPolicy::Compute: return nds_gpu3d_compiled_accelerated_backend();
         default: return "invalid";
     }
 }
@@ -653,6 +673,14 @@ bool nds_gpu3d_compute_renderer_built() {
 #endif
 }
 
+const char* nds_gpu3d_compiled_accelerated_backend() {
+#if defined(NDS_USE_NATIVE_GL)
+    return "native-gl";
+#else
+    return "compute";
+#endif
+}
+
 bool nds_gpu3d_compute_runtime_failed() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     return g_compute_runtime_failed;
@@ -663,7 +691,7 @@ bool nds_gpu3d_compute_runtime_failed() {
 
 uint32_t nds_gpu3d_compute_output_texture() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-    auto* renderer = dynamic_cast<melonDS::ComputeRenderer*>(
+    auto* renderer = dynamic_cast<NdsAcceleratedRenderer*>(
         &g_nds.GPU.GPU3D.GetCurrentRenderer());
     return renderer ? renderer->GetLowResTexture() : 0u;
 #else
@@ -676,7 +704,7 @@ bool nds_gpu3d_set_internal_scale(uint8_t scale) {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     // The scale is baked into every compute shader and sizes every
     // framebuffer, so it cannot change under a live renderer.
-    if (dynamic_cast<melonDS::ComputeRenderer*>(
+    if (dynamic_cast<NdsAcceleratedRenderer*>(
             &g_nds.GPU.GPU3D.GetCurrentRenderer()) != nullptr)
         return false;
 #endif
@@ -687,7 +715,7 @@ bool nds_gpu3d_set_internal_scale(uint8_t scale) {
 bool nds_gpu3d_set_runtime_internal_scale(uint8_t scale) {
     if (scale < 1u || scale > kMaxInternalScale) return false;
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-    auto* renderer = dynamic_cast<melonDS::ComputeRenderer*>(
+    auto* renderer = dynamic_cast<NdsAcceleratedRenderer*>(
         &g_nds.GPU.GPU3D.GetCurrentRenderer());
     if (!renderer) {
         g_internal_scale = scale;
@@ -730,7 +758,7 @@ bool nds_gpu3d_set_runtime_internal_scale(uint8_t scale) {
 
 uint8_t nds_gpu3d_internal_scale() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-    auto* renderer = dynamic_cast<melonDS::ComputeRenderer*>(
+    auto* renderer = dynamic_cast<NdsAcceleratedRenderer*>(
         &g_nds.GPU.GPU3D.GetCurrentRenderer());
     // Report what is actually rendering, not what was requested, so a
     // presenter can never sample a hi-res surface that does not exist.
@@ -760,7 +788,7 @@ bool nds_gpu3d_display_readback_latency() {
 
 uint32_t nds_gpu3d_compute_output_texture_hires() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-    auto* renderer = dynamic_cast<melonDS::ComputeRenderer*>(
+    auto* renderer = dynamic_cast<NdsAcceleratedRenderer*>(
         &g_nds.GPU.GPU3D.GetCurrentRenderer());
     if (!renderer || renderer->GetScaleFactor() <= 1) return 0u;
     return renderer->GetHiResTexture();
@@ -771,6 +799,7 @@ uint32_t nds_gpu3d_compute_output_texture_hires() {
 
 bool nds_gpu3d_use_compute_renderer() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
+    std::fprintf(stderr,"[gpu3d] accelerated backend: %s\n", nds_gpu3d_compiled_accelerated_backend());
     g_compute_shader_setup_failed = false;
     g_compute_runtime_failed = false;
     clear_compute_gl_errors();
@@ -782,7 +811,7 @@ bool nds_gpu3d_use_compute_renderer() {
                      render_width);
         return false;
     }
-    auto renderer = melonDS::ComputeRenderer::New();
+    auto renderer = NdsAcceleratedRenderer::New();
     if (!renderer || compute_gl_stage_failed("initialization")) return false;
     // Width is a shader constant and determines every framebuffer/PBO
     // allocation. Establish it before settings allocate or compile anything.
@@ -817,7 +846,8 @@ bool nds_gpu3d_use_compute_renderer() {
             return false;
         }
     }
-    std::fprintf(stderr, "[gpu3d] compute shaders ready          \n");
+    std::fprintf(stderr, "[gpu3d] %s shaders ready\n",
+                 nds_gpu3d_compiled_accelerated_backend());
     std::fprintf(stderr, "[gpu3d] compute readback overlap: %s\n",
                  compute_readback_overlap() ? "on" : "off");
     g_nds.GPU.GPU3D.SetCurrentRenderer(std::move(renderer));
@@ -1007,6 +1037,9 @@ bool gpu3d_savestate_validate(const NdsGpu3dSaveState& in,
 bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
                             std::string* error) {
     if (!gpu3d_savestate_validate(in, error)) return false;
+#if defined(NDS_USE_NATIVE_GL)
+    g_capture_reference.Reset();
+#endif
 #if defined(NDS_MPH_SUBMIT_HLE)
     g_command_cache.clear(); // restored RAM can reuse old generation numbers
 #endif
@@ -1046,6 +1079,9 @@ bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
 #endif
     if (!gpu.AbortFrame) {
         gpu.GetCurrentRenderer().RenderFrame(g_nds.GPU);
+#if defined(NDS_USE_NATIVE_GL)
+        latch_capture_reference();
+#endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
         if (gpu.IsRendererAccelerated()) {
             g_compute_rendered_frame = true;
@@ -1063,6 +1099,9 @@ bool gpu3d_savestate_import(const NdsGpu3dSaveState& in,
 }
 
 void nds_gpu3d_reset() {
+#if defined(NDS_USE_NATIVE_GL)
+    g_capture_reference.Reset();
+#endif
 #if defined(NDS_MPH_SUBMIT_HLE)
     g_command_cache.clear();
 #endif
@@ -1263,6 +1302,9 @@ void nds_gpu3d_vcount215() {
 #endif
     if (!profiling()) {
         g_nds.GPU.GPU3D.VCount215(g_nds.GPU);
+#if defined(NDS_USE_NATIVE_GL)
+        latch_capture_reference();
+#endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
         if (g_nds.GPU.GPU3D.IsRendererAccelerated())
             g_compute_rendered_frame = true;
@@ -1276,6 +1318,9 @@ void nds_gpu3d_vcount215() {
     }
     const auto start = ProfileClock::now();
     g_nds.GPU.GPU3D.VCount215(g_nds.GPU);
+#if defined(NDS_USE_NATIVE_GL)
+    latch_capture_reference();
+#endif
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     if (g_nds.GPU.GPU3D.IsRendererAccelerated())
         g_compute_rendered_frame = true;
@@ -1288,6 +1333,17 @@ void nds_gpu3d_vcount215() {
         (nds_gpu2d_requires_3d_readback() || g_display_readback_latency))
         compute_submit_readback();
 #endif
+}
+
+const uint32_t* nds_gpu3d_capture_line(int line) {
+#if defined(NDS_USE_NATIVE_GL)
+    // Keep using the latched reference across a host-only fallback or HD
+    // renderer rebuild. The new backend may not have drawn a frame yet.
+    if (g_capture_reference.HasFrame())
+        return g_capture_reference.GetLine(line,
+            g_nds.GPU.GPU3D.GetRenderXPos(), g_nds.GPU.GPU3D.AbortFrame);
+#endif
+    return nds_gpu3d_line(line);
 }
 
 const uint32_t* nds_gpu3d_line(int line) {

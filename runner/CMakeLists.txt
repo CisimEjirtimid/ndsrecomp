@@ -24,8 +24,15 @@ option(NDS_BOOTSTRAP_FIRMWARE
     "Build with BIOS banks only so guest-produced firmware RAM can be captured"
     OFF)
 option(NDS_ENABLE_COMPUTE_RENDERER
-    "Build the preferred melonDS OpenGL 4.3 compute renderer"
+    "Build the selected melonDS accelerated renderer (OpenGL 4.3 context)"
     ON)
+set(NDS_ACCELERATED_RENDERER "COMPUTE" CACHE STRING
+    "Developer build selection: COMPUTE or OPENGL native rasterization")
+set_property(CACHE NDS_ACCELERATED_RENDERER PROPERTY STRINGS COMPUTE OPENGL)
+option(NDS_BUILD_NATIVE_GL_TESTS "Build focused SDL3/native-GL context checks" OFF)
+if(NOT NDS_ACCELERATED_RENDERER MATCHES "^(COMPUTE|OPENGL)$")
+    message(FATAL_ERROR "NDS_ACCELERATED_RENDERER must be COMPUTE or OPENGL")
+endif()
 set(NDS_SDL_BACKEND "SDL3" CACHE STRING
     "Host presentation backend: SDL3, SDL2, or NONE")
 set_property(CACHE NDS_SDL_BACKEND PROPERTY STRINGS SDL3 SDL2 NONE)
@@ -65,6 +72,12 @@ endif()
 set(NDS_BUILD_VARIANT "")
 if(NDS_MPH_SUBMIT_IMPLEMENTATION STREQUAL "HLE")
     set(NDS_BUILD_VARIANT "mph-submit-hle-v3")
+endif()
+if(NDS_ENABLE_COMPUTE_RENDERER AND NDS_ACCELERATED_RENDERER STREQUAL "OPENGL")
+    if(NDS_BUILD_VARIANT)
+        string(APPEND NDS_BUILD_VARIANT "-")
+    endif()
+    string(APPEND NDS_BUILD_VARIANT "native-gl-v1")
 endif()
 if(NDS_MKDS_IMPLEMENTATION STREQUAL "HLE")
     if(NDS_BUILD_VARIANT)
@@ -616,9 +629,16 @@ if(NDS_PROFILE_HLE_HEAT)
         COMPILE_DEFINITIONS NDS_PROFILE_HLE_HEAT=1)
 endif()
 if(NDS_ENABLE_COMPUTE_RENDERER)
+    if(NDS_ACCELERATED_RENDERER STREQUAL "OPENGL")
+        target_sources(nds_runner PRIVATE vendor/melonds/GPU3D_OpenGL.cpp
+            src/melonds_compute/CaptureReference.cpp
+            src/melonds_compute/TextureUpscaleStub.cpp)
+        target_compile_definitions(nds_runner PRIVATE NDS_USE_NATIVE_GL=1 OGLRENDERER_ENABLED=1)
+    else()
+        target_sources(nds_runner PRIVATE vendor/melonds/GPU3D_Compute.cpp
+            src/melonds_compute/TextureUpscale.cpp)
+    endif()
     target_sources(nds_runner PRIVATE
-        vendor/melonds/GPU3D_Compute.cpp
-        src/melonds_compute/TextureUpscale.cpp
         vendor/melonds/GPU3D_Texcache.cpp
         vendor/melonds/GPU3D_TexcacheOpenGL.cpp
         src/melonds_compute/GPU_OpenGL.cpp
@@ -865,6 +885,20 @@ ndsrecomp_link_tomlpp(frontend_config_test)
       vendor/melonds/GPU3D.cpp vendor/melonds/GPU3D_Soft.cpp vendor/melonds/Savestate.cpp)
   target_include_directories(gx_command_batch_test PRIVATE vendor/melonds)
   add_test(NAME gx_command_batch_test COMMAND gx_command_batch_test)
+
+  if(NDS_BUILD_NATIVE_GL_TESTS AND NDS_ENABLE_COMPUTE_RENDERER AND NDS_SDL_BACKEND STREQUAL "SDL3")
+    add_executable(native_gl_test tests/native_gl_test.cpp
+        src/melonds_compute/CaptureReference.cpp src/melonds_compute/GPU_OpenGL.cpp
+        src/melonds_compute/PlatformCompute.cpp vendor/melonds/GPU3D.cpp
+        vendor/melonds/GPU3D_Soft.cpp vendor/melonds/Savestate.cpp
+        vendor/melonds/GPU3D_OpenGL.cpp vendor/melonds/OpenGLSupport.cpp
+        vendor/melonds/glad/glad.c)
+    target_include_directories(native_gl_test PRIVATE vendor/melonds src/melonds_compute)
+    target_compile_definitions(native_gl_test PRIVATE OGLRENDERER_ENABLED=1 MELONDS_GL_HEADER="glad/glad.h")
+    target_link_libraries(native_gl_test PRIVATE SDL3::SDL3)
+    add_test(NAME native_gl_test COMMAND native_gl_test)
+    set_tests_properties(native_gl_test PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
 
   add_executable(hle_mkds_test tests/hle_mkds_test.cpp src/hle_mkds.cpp)
   target_compile_definitions(hle_mkds_test PRIVATE NDS_RUNTIME_ABI_SHIMS=1)
