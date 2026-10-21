@@ -1,0 +1,79 @@
+diff --git a/src/NDS.cpp b/src/NDS.cpp
+index 328b263..04eb42d 100644
+--- a/src/NDS.cpp
++++ b/src/NDS.cpp
+@@ -899,8 +899,18 @@ void NDS::RunSystemSleep(u64 timestamp)
+ // boundary (a whole ~560k-cycle frame later). Stock builds never see this.
+ extern bool Oracle_BreakRequested();
+ #  define MELONDS_ORACLE_BREAK (Oracle_BreakRequested())
++// A break leaves the physical frame half-run. The next RunFrame must CONTINUE
++// it: re-running the frame-start bookkeeping (TotalScanlines = 0,
++// GPU.StartFrame) would restart the raster at line 0 and silently drop the
++// rest of the interrupted frame, so every stop would lose emulated time.
++extern bool Oracle_FrameInProgress();
++extern void Oracle_SetFrameInProgress(bool inProgress);
++#  define MELONDS_ORACLE_RESUMING (Oracle_FrameInProgress())
++#  define MELONDS_ORACLE_SET_IN_PROGRESS(v) Oracle_SetFrameInProgress(v)
+ #else
+ #  define MELONDS_ORACLE_BREAK false
++#  define MELONDS_ORACLE_RESUMING false
++#  define MELONDS_ORACLE_SET_IN_PROGRESS(v) ((void)0)
+ #endif
+ 
+ template <CPUExecuteMode cpuMode>
+@@ -908,11 +918,15 @@ u32 NDS::RunFrame()
+ {
+     Current = this;
+ 
+-    FrameStartTimestamp = SysTimestamp;
++    bool resumeFrame = MELONDS_ORACLE_RESUMING;
++    if (!resumeFrame)
++    {
++        FrameStartTimestamp = SysTimestamp;
+ 
+-    GPU.TotalScanlines = 0;
++        GPU.TotalScanlines = 0;
+ 
+-    LagFrameFlag = true;
++        LagFrameFlag = true;
++    }
+     bool runFrame = Running && !(CPUStop & CPUStop_Sleep);
+     while (Running && !MELONDS_ORACLE_BREAK)
+     {
+@@ -952,10 +966,11 @@ u32 NDS::RunFrame()
+                 ARM7.CheckGdbIncoming();
+             }
+ 
+-            if (!(CPUStop & CPUStop_Wakeup))
++            if (!(CPUStop & CPUStop_Wakeup) && !resumeFrame)
+             {
+                 GPU.StartFrame();
+             }
++            resumeFrame = false;
+             CPUStop &= ~CPUStop_Wakeup;
+ 
+             while (Running && GPU.TotalScanlines==0 && !MELONDS_ORACLE_BREAK)
+@@ -1056,6 +1071,14 @@ u32 NDS::RunFrame()
+         break;
+     }
+ 
++    if (Running && GPU.TotalScanlines == 0 && MELONDS_ORACLE_BREAK)
++    {
++        // Broke mid-frame: the frame is not finished, so do not count it.
++        MELONDS_ORACLE_SET_IN_PROGRESS(true);
++        return 0;
++    }
++    MELONDS_ORACLE_SET_IN_PROGRESS(false);
++
+     // In the context of TASes, frame count is traditionally the primary measure of emulated time,
+     // so it needs to be tracked even if NDS is powered off.
+     NumFrames++;
+@@ -1069,6 +1092,8 @@ u32 NDS::RunFrame()
+ }
+ 
+ #undef MELONDS_ORACLE_BREAK
++#undef MELONDS_ORACLE_RESUMING
++#undef MELONDS_ORACLE_SET_IN_PROGRESS
+ 
+ u32 NDS::RunFrame()
+ {
