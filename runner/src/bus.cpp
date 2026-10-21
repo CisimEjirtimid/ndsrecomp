@@ -254,7 +254,45 @@ bool watch_range(uint32_t addr, uint32_t width, uint32_t lo, uint32_t hi) {
     return addr < hi && end > lo;
 }
 
+// Opt-in extra watch windows for title bring-up, so a probe can recover the
+// writer of an address the built-in firmware windows do not cover without
+// baking title addresses into the runner. NDS_WATCH_RANGES="lo-hi[,lo-hi]"
+// (hex, half-open), parsed once; at most kExtraWatchMax windows.
+constexpr int kExtraWatchMax = 8;
+struct ExtraWatch {
+    int count = 0;
+    uint32_t lo[kExtraWatchMax]{};
+    uint32_t hi[kExtraWatchMax]{};
+};
+
+ExtraWatch parse_extra_watch() {
+    ExtraWatch w;
+    const char* env = std::getenv("NDS_WATCH_RANGES");
+    if (!env) return w;
+    const char* p = env;
+    while (*p && w.count < kExtraWatchMax) {
+        char* end = nullptr;
+        const unsigned long lo = std::strtoul(p, &end, 16);
+        if (end == p || *end != '-') break;
+        p = end + 1;
+        const unsigned long hi = std::strtoul(p, &end, 16);
+        if (end == p || hi <= lo) break;
+        w.lo[w.count] = static_cast<uint32_t>(lo);
+        w.hi[w.count] = static_cast<uint32_t>(hi);
+        std::fprintf(stderr, "[watch] extra range %08lX-%08lX\n", lo, hi);
+        ++w.count;
+        p = end;
+        if (*p == ',') ++p;
+    }
+    return w;
+}
+
+const ExtraWatch g_extra_watch = parse_extra_watch();
+
 bool watch_addr(uint32_t addr, uint32_t width) {
+    for (int i = 0; i < g_extra_watch.count; ++i)
+        if (watch_range(addr, width, g_extra_watch.lo[i], g_extra_watch.hi[i]))
+            return true;
     return watch_range(addr, width, 0x021F0000u, 0x021F0040u) ||
            // Firmware menu/settings job-control block. IPC callbacks and
            // editor state machines exchange command state here.
