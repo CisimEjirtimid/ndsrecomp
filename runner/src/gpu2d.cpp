@@ -1341,13 +1341,18 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
             for (int x = 0; x < 256; ++x)
                 dst[x] = to_rgb32(bright(comp6[x]));
         } else if (mode == 2u) {
+            // VRAM display reads the LCDC bank directly, as capture source B
+            // does (melonDS DrawScanline); an unmapped bank reads as zero.
+            // Never through nds_video_read: this may run on a pool worker,
+            // and the guest-read fence there drains the pool -- including
+            // the job this worker is inside, so it would wait on itself.
             const uint32_t bank=(u.dispcnt>>18)&3u;
-            const uint32_t base=0x06800000u+(bank<<17)+(y*256u)*2u;
-            for(int x=0;x<256;++x){
-                const uint16_t c=static_cast<uint16_t>(
-                    nds_video_read(9,base+x*2u,2));
-                dst[x]=to_rgb32(bright(rgb6(c)));
-            }
+            const uint16_t* const src = nds_vram_lcdc_mapped(bank)
+                ? reinterpret_cast<const uint16_t*>(nds_vram_bank_data(bank)) +
+                      y * 256
+                : nullptr;
+            for(int x=0;x<256;++x)
+                dst[x]=to_rgb32(bright(src ? rgb6(src[x]) : rgb6(0u)));
         } else {
             // Main-memory display FIFO: the feed (0x04000068 + DMA mode 4)
             // is not implemented; an unfed FIFO displays black.
