@@ -146,6 +146,12 @@ uint32_t bus_exec_page_generation(uint32_t addr);
 // mapping inputs. Call after anything that changes what an address means:
 // bus_init, WRAMCNT writes, CP15 control/TCM writes.
 void bus_fast_refresh();
+// DMA is a system-bus master: the ARM9 ITCM/DTCM sit on the CPU's private
+// bus and are invisible to it (GBATEK; melonDS routes DMA through
+// ARM9Read/Write, which has no TCM). While a scope is open, bus accesses made
+// on behalf of an ARM9 DMA channel skip both TCMs and reach the system map.
+void bus_dma_master_begin();
+void bus_dma_master_end();
 // Compare generated source bytes with the active CPU's live executable view
 // without producing bus events or consuming guest cycles.
 bool bus_live_bytes_equal(uint32_t addr, const uint8_t* expected,

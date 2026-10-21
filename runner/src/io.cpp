@@ -2993,6 +2993,11 @@ void nds_dma_run(int cpu, unsigned long long target_cycles) {
         // Gamecard: one word per data-ready request. GXFIFO: at most 112
         // units per FIFO-level request (melonDS DMA::Start IterCount cap).
         uint32_t request_units = gamecard ? 1u : gxfifo ? 112u : UINT32_MAX;
+        // The DMA master sees the system bus, not the ARM9's private TCMs.
+        struct DmaMasterScope {
+            DmaMasterScope() { bus_dma_master_begin(); }
+            ~DmaMasterScope() { bus_dma_master_end(); }
+        } dma_master;
         while (d.remaining && g_runtime_cycles < target_cycles) {
             const uint32_t unit = dma_unit_cycles(cpu, d, width);
             g_runtime_cycles += uint64_t{unit} << (cpu == 0 ? 1u : 0u);
