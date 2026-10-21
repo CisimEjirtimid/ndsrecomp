@@ -764,6 +764,10 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+    // The player's layout choice from the runtime menu outranks the title's
+    // TOML default; NDS_SCREEN_LAYOUT and --screen-layout below still win.
+    nds_load_runtime_screen_layout(cli_runtime_settings_path,
+                                   &frontend_options.screen_layout);
     NdsFullscreenOverrideError fullscreen_error =
         NdsFullscreenOverrideError::None;
     if (!nds_apply_fullscreen_overrides(
@@ -1774,6 +1778,7 @@ int main(int argc, char** argv) {
         }
         rom_revision = rom[0x1E];
     }
+    frontend_options.game_title = nds_rom_banner_title(rom.data(), rom.size());
     nds_diagnostics_set_rom_header(
         rom_game_code.c_str(), rom_revision,
         static_cast<uint64_t>(rom.size()));

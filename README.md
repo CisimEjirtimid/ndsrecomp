@@ -243,8 +243,12 @@ turned a quarter turn counter-clockwise, the top screen on the left and the
 touchscreen on the right, with pointer input turned back into native touch
 coordinates. `book-left` is the left-handed mirror (clockwise, touchscreen on
 the left). Only presentation turns: guest framebuffers are unchanged, and the
-runtime menu and savestate notices stay upright. Relative-mouse touch deltas
-are not turned. Adaptive widescreen
+runtime menu and savestate notices stay upright, and relative stylus input
+(relative-mouse touch, the virtual stylus) moves along the turned screen. The
+runtime menu (Esc), titled from the cartridge banner, switches the layout
+live under Display; with `--runtime-settings-path` the choice is saved as
+`screen_layout=` and outranks the TOML default at the next launch
+(`NDS_SCREEN_LAYOUT` and `--screen-layout` still win). Adaptive widescreen
 is a title capability, not framebuffer stretching: unsupported screen choices
 are rejected. A title may expose the top screen, bottom screen, or both
 independently. The native 256x192 compositor remains the parity path; adaptive

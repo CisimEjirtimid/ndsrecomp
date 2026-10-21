@@ -4,6 +4,8 @@
 #include <cctype>
 #include <exception>
 #include <cstdlib>
+#include <fstream>
+#include <vector>
 
 #include "toml.hpp"
 
@@ -50,6 +52,64 @@ bool nds_parse_screen_layout(const std::string& value,
         return true;
     }
     return false;
+}
+
+bool nds_load_runtime_screen_layout(const std::string& path,
+                                    NdsScreenLayout* out) {
+    if (path.empty() || !out) return false;
+    std::ifstream in(path);
+    std::string line;
+    bool found = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        static constexpr char kKey[] = "screen_layout=";
+        if (line.compare(0, sizeof(kKey) - 1, kKey) != 0) continue;
+        NdsScreenLayout parsed = NdsScreenLayout::Stacked;
+        if (!nds_parse_screen_layout(line.substr(sizeof(kKey) - 1), &parsed))
+            return false;
+        *out = parsed;
+        found = true;
+    }
+    return found;
+}
+
+std::string nds_rom_banner_title(const uint8_t* rom, size_t size) {
+    // Banner offset at header 0x68; the English title is 128 UTF-16LE
+    // characters at banner + 0x340, lines separated by '\n'.
+    std::vector<std::string> lines(1);
+    if (rom && size >= 0x6C) {
+        const uint32_t banner = static_cast<uint32_t>(rom[0x68]) |
+                                (static_cast<uint32_t>(rom[0x69]) << 8u) |
+                                (static_cast<uint32_t>(rom[0x6A]) << 16u) |
+                                (static_cast<uint32_t>(rom[0x6B]) << 24u);
+        const size_t title = static_cast<size_t>(banner) + 0x340u;
+        if (banner != 0u && title + 0x100u <= size) {
+            for (size_t i = 0; i < 0x100u; i += 2) {
+                const uint16_t ch = static_cast<uint16_t>(
+                    rom[title + i] | (rom[title + i + 1] << 8u));
+                if (ch == 0u) break;
+                if (ch == u'\n') lines.emplace_back();
+                else if (ch >= 0x20u && ch <= 0x7Eu)
+                    lines.back().push_back(static_cast<char>(ch));
+            }
+        }
+    }
+    // The last line of a multi-line banner names the publisher.
+    if (lines.size() > 1) lines.pop_back();
+    std::string out;
+    for (const std::string& line : lines) {
+        const size_t first = line.find_first_not_of(' ');
+        if (first == std::string::npos) continue;
+        if (!out.empty()) out.push_back(' ');
+        out += line.substr(first, line.find_last_not_of(' ') - first + 1);
+    }
+    if (out.empty() && rom && size >= 12) {
+        for (size_t i = 0; i < 12 && rom[i] != 0; ++i)
+            if (rom[i] >= 0x20 && rom[i] <= 0x7E)
+                out.push_back(static_cast<char>(rom[i]));
+        while (!out.empty() && out.back() == ' ') out.pop_back();
+    }
+    return out;
 }
 
 bool nds_parse_fullscreen_mode(const std::string& value,

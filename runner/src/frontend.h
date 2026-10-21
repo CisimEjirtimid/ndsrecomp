@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -324,6 +325,9 @@ struct NdsFrontendOptions {
     // Optional launcher-owned settings file. Runtime-only menu changes update
     // the existing key/value file when the launcher passes this path.
     std::string runtime_settings_path;
+    // Runtime menu heading: the cartridge's own banner title
+    // (nds_rom_banner_title), empty when no cartridge is inserted.
+    std::string game_title;
 };
 
 // Parse [display] settings from a game TOML. Missing [display] is valid.
@@ -333,6 +337,16 @@ bool nds_load_frontend_config(const std::string& path,
                               std::string* error);
 bool nds_parse_screen_layout(const std::string& value,
                              NdsScreenLayout* out);
+// The runtime menu saves the player's layout choice as `screen_layout=` in
+// the runtime settings file. Returns true and sets *out only when the file
+// holds a valid value; it ranks above the TOML default and below the
+// NDS_SCREEN_LAYOUT / --screen-layout overrides.
+bool nds_load_runtime_screen_layout(const std::string& path,
+                                    NdsScreenLayout* out);
+// The cartridge's English banner title with the publisher line dropped and
+// the remaining lines joined by spaces (e.g. "Hotel Dusk Room 215"), falling
+// back to the 12-character header title. Printable ASCII only.
+std::string nds_rom_banner_title(const uint8_t* rom, size_t size);
 bool nds_parse_fullscreen_mode(const std::string& value,
                                NdsFullscreenMode* out);
 enum class NdsFullscreenOverrideError : uint8_t {
