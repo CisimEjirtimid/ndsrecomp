@@ -12,7 +12,17 @@
 enum class NdsScreenLayout : uint8_t {
     Stacked,
     Separate,
+    // Console held sideways like a book (see book_layout.h): one window, each
+    // screen turned a quarter turn, side by side. Book is right-handed
+    // (touchscreen on the right), BookLeftHanded its mirror.
+    Book,
+    BookLeftHanded,
 };
+
+inline bool nds_screen_layout_is_book(NdsScreenLayout layout) {
+    return layout == NdsScreenLayout::Book ||
+           layout == NdsScreenLayout::BookLeftHanded;
+}
 
 enum class NdsFullscreenMode : uint8_t {
     Off,

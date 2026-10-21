@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "book_layout.h"
 #include "debug_server.h"
 #include "diagnostics.h"
 #include "gpu2d.h"
@@ -933,13 +934,46 @@ SDL_GameController* open_first_controller() {
 #endif
 }
 
+// How the bottom window's logical coordinates reach the touchscreen.
+struct TouchMapping {
+    NdsScreenLayout layout = NdsScreenLayout::Stacked;
+    int logical_width = kScreenWidth;   // stacked/separate bottom canvas
+    int canvas_height = kScreenWidth;   // book: logical canvas height
+    int bottom_width = kScreenWidth;    // bottom screen texture width
+};
+
 void set_touch_from_mouse(float x, float y, bool down,
-                          NdsScreenLayout layout, int logical_width) {
+                          const TouchMapping& mapping) {
+    if (nds_screen_layout_is_book(mapping.layout)) {
+        const bool left_handed =
+            mapping.layout == NdsScreenLayout::BookLeftHanded;
+        const NdsLogicalRect area = nds_book_screen_area(
+            left_handed, 1, mapping.bottom_width, mapping.canvas_height);
+        float screen_x = 0.0f;
+        float screen_y = 0.0f;
+        const float content_left =
+            static_cast<float>((mapping.bottom_width - kScreenWidth) / 2);
+        if (!down || !nds_book_logical_to_screen(left_handed, area, x, y,
+                                                 &screen_x, &screen_y) ||
+            screen_x < content_left ||
+            screen_x >= content_left + kScreenWidth) {
+            nds_set_touch(0, 0, false);
+            return;
+        }
+        nds_set_touch(
+            static_cast<uint16_t>(std::clamp<int>(
+                static_cast<int>(screen_x - content_left), 0,
+                kScreenWidth - 1)),
+            static_cast<uint16_t>(std::clamp<int>(
+                static_cast<int>(screen_y), 0, kScreenHeight - 1)),
+            true);
+        return;
+    }
     // Coordinates are expected in the renderer's logical DS-space.
     const float bottom_origin =
-        layout == NdsScreenLayout::Separate ? 0.0f : kScreenHeight;
+        mapping.layout == NdsScreenLayout::Separate ? 0.0f : kScreenHeight;
     const float left =
-        static_cast<float>((logical_width - kScreenWidth) / 2);
+        static_cast<float>((mapping.logical_width - kScreenWidth) / 2);
     if (!down || x < left || x >= left + kScreenWidth ||
         y < bottom_origin || y >= bottom_origin + kScreenHeight) {
         nds_set_touch(0, 0, false);
@@ -1318,11 +1352,18 @@ const uint32_t* runtime_menu_overlay(RecompRuntimeUi* ui,
 
 struct FrontendPresentation {
     bool separate = false;
+    // Book layouts share the stacked single window; `book_left_handed`
+    // selects the mirror (book_layout.h).
+    bool book = false;
+    bool book_left_handed = false;
     bool gl_top = false;
     SDL_Window* windows[2]{};
     SDL_Renderer* renderers[2]{};
     SDL_Texture* textures[2]{};
     SDL_Texture* sample_targets[2]{};
+    // Book layout: the runtime menu is drawn upright over both turned
+    // screens from this window-sized overlay instead of inside the top screen.
+    SDL_Texture* book_menu = nullptr;
     uint32_t window_ids[2]{};
     int screen_widths[2]{kScreenWidth, kScreenWidth};
     int canvas_width = kScreenWidth;
@@ -1381,6 +1422,8 @@ uint32_t fullscreen_flags(NdsFullscreenMode mode) {
 #endif
 
 void destroy_presentation(FrontendPresentation& presentation) {
+    if (presentation.book_menu) SDL_DestroyTexture(presentation.book_menu);
+    presentation.book_menu = nullptr;
     for (SDL_Texture*& texture : presentation.sample_targets) {
         if (texture) SDL_DestroyTexture(texture);
         texture = nullptr;
@@ -1571,6 +1614,23 @@ void render_texture(SDL_Renderer* renderer, SDL_Texture* texture,
 #endif
 }
 
+// `destination` is the unrotated rectangle; the texture turns `degrees`
+// clockwise about its centre.
+void render_texture_rotated(SDL_Renderer* renderer, SDL_Texture* texture,
+                            const SDL_Rect& destination, double degrees) {
+#if defined(NDS_HAVE_SDL3)
+    const SDL_FRect dst{static_cast<float>(destination.x),
+                        static_cast<float>(destination.y),
+                        static_cast<float>(destination.w),
+                        static_cast<float>(destination.h)};
+    SDL_RenderTextureRotated(renderer, texture, nullptr, &dst, degrees,
+                             nullptr, SDL_FLIP_NONE);
+#else
+    SDL_RenderCopyEx(renderer, texture, nullptr, &destination, degrees,
+                     nullptr, SDL_FLIP_NONE);
+#endif
+}
+
 void render_line(SDL_Renderer* renderer, int x1, int y1, int x2, int y2) {
 #if defined(NDS_HAVE_SDL3)
     SDL_RenderLine(renderer, static_cast<float>(x1), static_cast<float>(y1),
@@ -1685,6 +1745,9 @@ bool create_presentation(const NdsFrontendOptions& options,
                          bool allow_gl_top = true) {
     presentation.separate =
         options.screen_layout == NdsScreenLayout::Separate;
+    presentation.book = nds_screen_layout_is_book(options.screen_layout);
+    presentation.book_left_handed =
+        options.screen_layout == NdsScreenLayout::BookLeftHanded;
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     const char* direct_selection =
         std::getenv("NDS_COMPUTE_DIRECT_PRESENT");
@@ -1717,9 +1780,15 @@ bool create_presentation(const NdsFrontendOptions& options,
     presentation.canvas_width = std::max(
         presentation.screen_widths[0],
         presentation.screen_widths[1]);
-    const int first_height = presentation.separate
-        ? kScreenHeight * kWindowScale
-        : kScreenHeight * 2 * kWindowScale;
+    // Book: two turned screens side by side, as tall as the widest screen.
+    const int first_width = presentation.book
+        ? 2 * kBookAreaWidth * kWindowScale
+        : (presentation.separate ? presentation.screen_widths[0]
+                                 : presentation.canvas_width) * kWindowScale;
+    const int first_height = presentation.book
+        ? presentation.canvas_width * kWindowScale
+        : presentation.separate ? kScreenHeight * kWindowScale
+                                : kScreenHeight * 2 * kWindowScale;
     const uint64_t top_window_flags =
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
         (presentation.gl_top
@@ -1728,9 +1797,7 @@ bool create_presentation(const NdsFrontendOptions& options,
         presentation.separate ? "ndsrecomp - Top Screen"
                                : "ndsrecomp firmware preview",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        (presentation.separate ? presentation.screen_widths[0]
-                               : presentation.canvas_width) * kWindowScale,
-        first_height,
+        first_width, first_height,
         top_window_flags);
     if (!presentation.windows[0]) {
         std::fprintf(stderr, "[sdl] window failed: %s\n", SDL_GetError());
@@ -1793,12 +1860,14 @@ bool create_presentation(const NdsFrontendOptions& options,
             continue;
         }
         const int logical_height =
-            !presentation.separate && screen == 0
+            presentation.book ? presentation.canvas_width
+            : !presentation.separate && screen == 0
                 ? kScreenHeight * 2 : kScreenHeight;
         if (screen == 0 || presentation.separate) {
             set_render_logical_size(
                 presentation.renderers[screen],
-                presentation.separate
+                presentation.book ? 2 * kBookAreaWidth
+                : presentation.separate
                     ? presentation.screen_widths[screen]
                     : presentation.canvas_width,
                 logical_height);
@@ -1854,7 +1923,7 @@ bool create_presentation(const NdsFrontendOptions& options,
 }
 
 void render_screen(FrontendPresentation& presentation, int screen,
-                   const SDL_Rect& destination) {
+                   const SDL_Rect& destination, double degrees = 0.0) {
     SDL_Renderer* renderer = presentation.renderers[screen];
     SDL_Texture* source = presentation.textures[screen];
     if (presentation.sample_scale > 1 && presentation.sample_targets[screen]) {
@@ -1865,7 +1934,23 @@ void render_screen(FrontendPresentation& presentation, int screen,
         SDL_SetRenderTarget(renderer, nullptr);
         source = presentation.sample_targets[screen];
     }
-    render_texture(renderer, source, &destination);
+    if (degrees != 0.0)
+        render_texture_rotated(renderer, source, destination, degrees);
+    else
+        render_texture(renderer, source, &destination);
+}
+
+// Book layout: the unrotated rectangle that, turned a quarter turn about its
+// centre, exactly covers the screen's area.
+SDL_Rect book_destination(const FrontendPresentation& presentation,
+                          int screen) {
+    const int width = presentation.screen_widths[screen];
+    const NdsLogicalRect area = nds_book_screen_area(
+        presentation.book_left_handed, screen, width,
+        presentation.canvas_width);
+    return SDL_Rect{area.x + (area.width - width) / 2,
+                    area.y + (area.height - kScreenHeight) / 2,
+                    width, kScreenHeight};
 }
 
 struct PresentationTicks {
@@ -1899,18 +1984,66 @@ bool apply_performance_governor_stage(
     return true;
 }
 
-void draw_virtual_stylus(SDL_Renderer* renderer, const SDL_Rect& destination,
-                         float stylus_x, float stylus_y) {
-    const int x = destination.x + static_cast<int>(
-        std::lround(stylus_x * destination.w / 256.0f));
-    const int y = destination.y + static_cast<int>(
-        std::lround(stylus_y * destination.h / 192.0f));
-
+void draw_stylus_cross(SDL_Renderer* renderer, int x, int y) {
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     render_line(renderer, x - 5, y, x - 2, y);
     render_line(renderer, x + 2, y, x + 5, y);
     render_line(renderer, x, y - 5, x, y - 2);
     render_line(renderer, x, y + 2, x, y + 5);
+}
+
+void draw_virtual_stylus(SDL_Renderer* renderer, const SDL_Rect& destination,
+                         float stylus_x, float stylus_y) {
+    draw_stylus_cross(
+        renderer,
+        destination.x + static_cast<int>(
+            std::lround(stylus_x * destination.w / 256.0f)),
+        destination.y + static_cast<int>(
+            std::lround(stylus_y * destination.h / 192.0f)));
+}
+
+// Book layout: the stylus position (native 256-wide touch coordinates) on
+// the turned bottom screen.
+void draw_book_virtual_stylus(SDL_Renderer* renderer,
+                              const FrontendPresentation& presentation,
+                              float stylus_x, float stylus_y) {
+    const int width = presentation.screen_widths[1];
+    const NdsLogicalRect area = nds_book_screen_area(
+        presentation.book_left_handed, 1, width, presentation.canvas_width);
+    float x = 0.0f;
+    float y = 0.0f;
+    nds_book_screen_to_logical(
+        presentation.book_left_handed, area,
+        stylus_x + static_cast<float>((width - kScreenWidth) / 2), stylus_y,
+        &x, &y);
+    draw_stylus_cross(renderer, static_cast<int>(std::lround(x)),
+                      static_cast<int>(std::lround(y)));
+}
+
+// Book layout: composite the open runtime menu onto a transparent upright
+// surface the size of the canvas and blend it over both turned screens.
+void draw_book_menu(FrontendPresentation& presentation,
+                    RecompRuntimeUi* runtime_ui) {
+    if (!runtime_ui || !recomp_runtime_ui_is_open(runtime_ui)) return;
+    SDL_Renderer* renderer = presentation.renderers[0];
+    const int width = 2 * kBookAreaWidth;
+    const int height = presentation.canvas_width;
+    if (!presentation.book_menu) {
+        presentation.book_menu = SDL_CreateTexture(
+            renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+            width, height);
+        if (!presentation.book_menu) return;
+        SDL_SetTextureBlendMode(presentation.book_menu, SDL_BLENDMODE_BLEND);
+        set_texture_scale_nearest(presentation.book_menu);
+    }
+    static std::vector<uint32_t> surface;
+    surface.assign(static_cast<size_t>(width) * static_cast<size_t>(height),
+                   0u);
+    recomp_runtime_ui_render_argb8888(runtime_ui, surface.data(), width,
+                                      height, width * sizeof(uint32_t));
+    SDL_UpdateTexture(presentation.book_menu, nullptr, surface.data(),
+                      width * sizeof(uint32_t));
+    render_texture(renderer, presentation.book_menu, nullptr);
 }
 
 PresentationTicks present_screens(FrontendPresentation& presentation,
@@ -1963,8 +2096,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
 #endif
         return ticks;
     }
-    top_pixels = runtime_menu_overlay(
-        runtime_ui, top_pixels, top_width, kScreenHeight);
+    if (!presentation.book)
+        top_pixels = runtime_menu_overlay(
+            runtime_ui, top_pixels, top_width, kScreenHeight);
     uint64_t start = SDL_GetPerformanceCounter();
     SDL_UpdateTexture(presentation.textures[0], nullptr, top_pixels,
                       top_width * sizeof(uint32_t));
@@ -1976,20 +2110,38 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
         start = SDL_GetPerformanceCounter();
         SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
         SDL_RenderClear(renderer);
-        const SDL_Rect top_rect{
-            (presentation.canvas_width -
-             presentation.screen_widths[0]) / 2,
-            0, presentation.screen_widths[0], kScreenHeight};
-        const SDL_Rect bottom_rect{
-            (presentation.canvas_width -
-             presentation.screen_widths[1]) / 2,
-            kScreenHeight, presentation.screen_widths[1], kScreenHeight};
-        render_screen(presentation, 0, top_rect);
-        render_screen(presentation, 1, bottom_rect);
-        if (virtual_stylus_visible)
-            draw_virtual_stylus(renderer, bottom_rect,
-                                virtual_stylus_x, virtual_stylus_y);
-        draw_savestate_notice(renderer, bottom_rect, savestate_notice);
+        if (presentation.book) {
+            const double degrees =
+                nds_book_rotation_degrees(presentation.book_left_handed);
+            render_screen(presentation, 0, book_destination(presentation, 0),
+                          degrees);
+            render_screen(presentation, 1, book_destination(presentation, 1),
+                          degrees);
+            if (virtual_stylus_visible)
+                draw_book_virtual_stylus(renderer, presentation,
+                                         virtual_stylus_x, virtual_stylus_y);
+            // Host text (notice, menu) stays upright across the canvas.
+            draw_savestate_notice(
+                renderer,
+                SDL_Rect{0, 0, 2 * kBookAreaWidth, presentation.canvas_width},
+                savestate_notice);
+            draw_book_menu(presentation, runtime_ui);
+        } else {
+            const SDL_Rect top_rect{
+                (presentation.canvas_width -
+                 presentation.screen_widths[0]) / 2,
+                0, presentation.screen_widths[0], kScreenHeight};
+            const SDL_Rect bottom_rect{
+                (presentation.canvas_width -
+                 presentation.screen_widths[1]) / 2,
+                kScreenHeight, presentation.screen_widths[1], kScreenHeight};
+            render_screen(presentation, 0, top_rect);
+            render_screen(presentation, 1, bottom_rect);
+            if (virtual_stylus_visible)
+                draw_virtual_stylus(renderer, bottom_rect,
+                                    virtual_stylus_x, virtual_stylus_y);
+            draw_savestate_notice(renderer, bottom_rect, savestate_notice);
+        }
         ticks.draw += SDL_GetPerformanceCounter() - start;
         start = SDL_GetPerformanceCounter();
         SDL_RenderPresent(renderer);
@@ -2055,10 +2207,22 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         (bottom_logical_width - kScreenWidth) / 2;
     const int top_content_left = presentation.separate
         ? 0 : (presentation.canvas_width - presentation.screen_widths[0]) / 2;
-    const NdsLogicalRect stacked_top_screen{
-        top_content_left, 0, presentation.screen_widths[0], kScreenHeight};
-    const NdsLogicalRect stacked_bottom_touch{
-        bottom_content_left, kScreenHeight, kScreenWidth, kScreenHeight};
+    // Shared-window click routing: the rendered top screen and the native
+    // 256-wide touch area (in a book layout, their turned areas).
+    const NdsLogicalRect stacked_top_screen = presentation.book
+        ? nds_book_screen_area(presentation.book_left_handed, 0,
+                               presentation.screen_widths[0],
+                               presentation.canvas_width)
+        : NdsLogicalRect{top_content_left, 0, presentation.screen_widths[0],
+                         kScreenHeight};
+    const NdsLogicalRect stacked_bottom_touch = presentation.book
+        ? nds_book_screen_area(presentation.book_left_handed, 1, kScreenWidth,
+                               presentation.canvas_width)
+        : NdsLogicalRect{bottom_content_left, kScreenHeight, kScreenWidth,
+                         kScreenHeight};
+    const TouchMapping touch_mapping{
+        options.screen_layout, bottom_logical_width,
+        presentation.canvas_width, presentation.screen_widths[1]};
     std::fprintf(stderr,
         "[sdl] layout=%s fullscreen=%s adaptive=%s supersampling=%ux aa=%ux "
         "internal=%ux\n",
@@ -3147,8 +3311,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                             set_touch_from_mouse(
                                 static_cast<float>(last_touch_event_x),
                                 static_cast<float>(last_touch_event_y),
-                                true, options.screen_layout,
-                                bottom_logical_width);
+                                true, touch_mapping);
                         } else {
                             nds_set_touch(0, 0, false);
                         }
@@ -3378,8 +3541,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 touch_release_pending = false;
                 touch_frames_held = 0;
                 set_touch_from_mouse(event.button.x, event.button.y, true,
-                                     options.screen_layout,
-                                     bottom_logical_width);
+                                     touch_mapping);
             }
             if (!virtual_stylus_mouse_consumed &&
                 event.type == SDL_MOUSEBUTTONUP &&
@@ -3394,14 +3556,12 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                     touch_release_pending = true;
                 else
                     set_touch_from_mouse(event.button.x, event.button.y, false,
-                                         options.screen_layout,
-                                         bottom_logical_width);
+                                         touch_mapping);
             }
             if (event.type == SDL_MOUSEMOTION && mouse_down &&
                 event.motion.windowID == presentation.window_ids[1])
                 set_touch_from_mouse(event.motion.x, event.motion.y, true,
-                                     options.screen_layout,
-                                     bottom_logical_width);
+                                     touch_mapping);
             if (event.type == SDL_MOUSEMOTION &&
                 virtual_stylus_active() &&
                 (event.motion.windowID == presentation.window_ids[0] ||

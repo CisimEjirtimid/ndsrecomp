@@ -28,6 +28,11 @@ int main() {
         !require(layout == NdsScreenLayout::Separate) ||
         !require(nds_parse_screen_layout("combined", &layout)) ||
         !require(layout == NdsScreenLayout::Stacked) ||
+        !require(nds_parse_screen_layout("Book", &layout)) ||
+        !require(layout == NdsScreenLayout::Book) ||
+        !require(nds_parse_screen_layout("book-left", &layout)) ||
+        !require(layout == NdsScreenLayout::BookLeftHanded) ||
+        !require(std::string(nds_screen_layout_name(layout)) == "book-left") ||
         !require(!nds_parse_screen_layout("sideways", &layout)))
         return 1;
 
