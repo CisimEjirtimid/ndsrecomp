@@ -1164,6 +1164,7 @@ uint64_t framebuffer_rgb_fnv(int screen) {
 
 constexpr const char* kRuntimeMouseSensitivityKey =
     "input.mouse_sensitivity";
+constexpr const char* kRuntimeScreenLayoutKey = "display.screen_layout";
 constexpr const char* kRuntimeResumeKey = "system.resume";
 constexpr const char* kRuntimeQuitKey = "system.quit";
 
@@ -1171,9 +1172,17 @@ struct RuntimeMenuState {
     NdsFrontendOptions* options = nullptr;
     bool* running = nullptr;
     bool close_requested = false;
+    // Set by the menu; the frontend loop rebuilds the presentation.
+    bool layout_changed = false;
+    // The player picked a layout this session, so it is saved; launchers
+    // that never offer the choice never see the key.
+    bool layout_chosen = false;
 };
 
-bool save_runtime_mouse_sensitivity(const std::string& path, uint16_t value) {
+// Rewrite one key=value line of the launcher's runtime settings file,
+// keeping every other line.
+bool save_runtime_setting(const std::string& path, const std::string& name,
+                          const std::string& value) {
     if (path.empty()) return false;
     std::filesystem::path settings(path);
     std::error_code error;
@@ -1193,8 +1202,8 @@ bool save_runtime_mouse_sensitivity(const std::string& path, uint16_t value) {
             if (equals != std::string::npos) {
                 const std::string key = line.substr(0, equals);
                 if (key == "settings_version") saw_version = true;
-                if (key == "mouse_sensitivity") {
-                    line = "mouse_sensitivity=" + std::to_string(value);
+                if (key == name) {
+                    line = name + "=" + value;
                     found = true;
                 }
             }
@@ -1204,7 +1213,7 @@ bool save_runtime_mouse_sensitivity(const std::string& path, uint16_t value) {
     if (!saw_version)
         lines.insert(lines.begin(), "settings_version=12");
     if (!found)
-        lines.push_back("mouse_sensitivity=" + std::to_string(value));
+        lines.push_back(name + "=" + value);
 
     std::ofstream out(settings, std::ios::trunc);
     if (!out) return false;
@@ -1221,6 +1230,10 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
         *value_out = state->options->relative_mouse_sensitivity;
         return 1;
     }
+    if (std::strcmp(item->key, kRuntimeScreenLayoutKey) == 0) {
+        *value_out = static_cast<int>(state->options->screen_layout);
+        return 1;
+    }
     return 0;
 }
 
@@ -1233,6 +1246,15 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
         state->options->relative_mouse_sensitivity =
             static_cast<uint16_t>(value);
         std::fprintf(stderr, "[sdl] mouse sensitivity set to %d%%\n", value);
+        return 1;
+    }
+    if (std::strcmp(item->key, kRuntimeScreenLayoutKey) == 0) {
+        if (value < static_cast<int>(NdsScreenLayout::Stacked) ||
+            value > static_cast<int>(NdsScreenLayout::BookLeftHanded))
+            return 0;
+        state->options->screen_layout = static_cast<NdsScreenLayout>(value);
+        state->layout_changed = true;
+        state->layout_chosen = true;
         return 1;
     }
     return 0;
@@ -1263,11 +1285,15 @@ int runtime_menu_is_enabled(void* context, const RecompRuntimeUiItem* item) {
 void runtime_menu_save(void* context) {
     auto* state = static_cast<RuntimeMenuState*>(context);
     if (!state || !state->options) return;
-    if (save_runtime_mouse_sensitivity(
-            state->options->runtime_settings_path,
-            state->options->relative_mouse_sensitivity)) {
-        std::fprintf(stderr,
-                     "[sdl] saved mouse sensitivity to runtime settings\n");
+    const std::string& path = state->options->runtime_settings_path;
+    if (save_runtime_setting(
+            path, "mouse_sensitivity",
+            std::to_string(state->options->relative_mouse_sensitivity)) &&
+        (!state->layout_chosen ||
+         save_runtime_setting(
+             path, "screen_layout",
+             nds_screen_layout_name(state->options->screen_layout)))) {
+        std::fprintf(stderr, "[sdl] saved runtime settings\n");
     }
 }
 
@@ -2041,6 +2067,11 @@ void draw_book_menu(FrontendPresentation& presentation,
                    0u);
     recomp_runtime_ui_render_argb8888(runtime_ui, surface.data(), width,
                                       height, width * sizeof(uint32_t));
+    // The menu dims what lies beneath it; dimming the transparent surface
+    // yields opaque black, so restore that backdrop as a translucent dim over
+    // the turned screens. The panel itself is never pure black.
+    for (uint32_t& pixel : surface)
+        if (pixel == 0xFF000000u) pixel = 0xB0000000u;
     SDL_UpdateTexture(presentation.book_menu, nullptr, surface.data(),
                       width * sizeof(uint32_t));
     render_texture(renderer, presentation.book_menu, nullptr);
@@ -2200,29 +2231,40 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         SDL_Quit();
         return 1;
     }
-    const int bottom_logical_width = presentation.separate
-        ? presentation.screen_widths[1]
-        : presentation.canvas_width;
-    const int bottom_content_left =
-        (bottom_logical_width - kScreenWidth) / 2;
-    const int top_content_left = presentation.separate
-        ? 0 : (presentation.canvas_width - presentation.screen_widths[0]) / 2;
+    // Pointer geometry of the current layout; recomputed when the runtime
+    // menu rebuilds the presentation in another layout.
+    int bottom_logical_width = 0;
+    int bottom_content_left = 0;
+    int top_content_left = 0;
     // Shared-window click routing: the rendered top screen and the native
     // 256-wide touch area (in a book layout, their turned areas).
-    const NdsLogicalRect stacked_top_screen = presentation.book
-        ? nds_book_screen_area(presentation.book_left_handed, 0,
-                               presentation.screen_widths[0],
-                               presentation.canvas_width)
-        : NdsLogicalRect{top_content_left, 0, presentation.screen_widths[0],
-                         kScreenHeight};
-    const NdsLogicalRect stacked_bottom_touch = presentation.book
-        ? nds_book_screen_area(presentation.book_left_handed, 1, kScreenWidth,
-                               presentation.canvas_width)
-        : NdsLogicalRect{bottom_content_left, kScreenHeight, kScreenWidth,
-                         kScreenHeight};
-    const TouchMapping touch_mapping{
-        options.screen_layout, bottom_logical_width,
-        presentation.canvas_width, presentation.screen_widths[1]};
+    NdsLogicalRect stacked_top_screen{};
+    NdsLogicalRect stacked_bottom_touch{};
+    TouchMapping touch_mapping{};
+    auto refresh_layout_geometry = [&]() {
+        bottom_logical_width = presentation.separate
+            ? presentation.screen_widths[1]
+            : presentation.canvas_width;
+        bottom_content_left = (bottom_logical_width - kScreenWidth) / 2;
+        top_content_left = presentation.separate
+            ? 0
+            : (presentation.canvas_width - presentation.screen_widths[0]) / 2;
+        stacked_top_screen = presentation.book
+            ? nds_book_screen_area(presentation.book_left_handed, 0,
+                                   presentation.screen_widths[0],
+                                   presentation.canvas_width)
+            : NdsLogicalRect{top_content_left, 0,
+                             presentation.screen_widths[0], kScreenHeight};
+        stacked_bottom_touch = presentation.book
+            ? nds_book_screen_area(presentation.book_left_handed, 1,
+                                   kScreenWidth, presentation.canvas_width)
+            : NdsLogicalRect{bottom_content_left, kScreenHeight, kScreenWidth,
+                             kScreenHeight};
+        touch_mapping = TouchMapping{
+            options.screen_layout, bottom_logical_width,
+            presentation.canvas_width, presentation.screen_widths[1]};
+    };
+    refresh_layout_geometry();
     // Relative stylus input (mouse deltas, stick) arrives along the window's
     // axes; on a turned book screen it must move along the screen's own.
     auto turn_stylus_delta = [&](float& dx, float& dy) {
@@ -2506,10 +2548,17 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     publish_keys();
     nds_set_touch(0, 0, false);
     bool running = true;
-    RuntimeMenuState runtime_menu_state{&options, &running, false};
+    RuntimeMenuState runtime_menu_state{&options, &running};
+    // Indexed by NdsScreenLayout.
+    static const char* const runtime_layout_choices[] = {
+        "Stacked", "Separate windows", "Book", "Book (left-handed)"};
     static const RecompRuntimeUiItem runtime_menu_items[] = {
+        {kRuntimeScreenLayoutKey, "Display", "Screen layout",
+         "Book turns screens for sideways play.",
+         RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, runtime_layout_choices, 4,
+         nullptr},
         {kRuntimeMouseSensitivityKey, "Input", "Mouse sensitivity",
-         "Prime Controls relative aim speed.",
+         "Relative-mouse stylus and aim speed.",
          RECOMP_RUNTIME_UI_INT, 10, 400, 1, nullptr, 0, nullptr},
         {kRuntimeResumeKey, "System", "Resume game",
          "Close settings and return to the game.",
@@ -2519,7 +2568,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
     };
     RecompRuntimeUiConfig runtime_menu_config{};
-    runtime_menu_config.title = "Metroid Prime Hunters";
+    runtime_menu_config.title = options.game_title.empty()
+        ? "Nintendo DS" : options.game_title.c_str();
     runtime_menu_config.subtitle = "Runtime Settings";
     runtime_menu_config.items = runtime_menu_items;
     runtime_menu_config.item_count =
@@ -2883,10 +2933,46 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         nds_set_touch(0, 0, false);
         publish_keys();
     };
+    // The layout the open presentation was built for; the runtime menu edits
+    // options.screen_layout, and a failed rebuild restores it from here.
+    NdsScreenLayout presented_layout = options.screen_layout;
+    auto apply_screen_layout = [&]() {
+        if (options.screen_layout == presented_layout) return;
+        if (presentation.gl_top) {
+            // The direct OpenGL top screen owns window 0's GL context, which
+            // the compute renderer keeps using; it is never torn down live.
+            std::fprintf(stderr,
+                         "[sdl] screen layout %s applies at the next launch\n",
+                         nds_screen_layout_name(options.screen_layout));
+            return;
+        }
+        release_relative_mouse();
+        mouse_down = false;
+        touch_release_pending = false;
+        nds_set_touch(0, 0, false);
+        FrontendPresentation rebuilt{};
+        if (!create_presentation(options, rebuilt, false)) {
+            std::fprintf(stderr, "[sdl] screen layout %s failed: %s\n",
+                         nds_screen_layout_name(options.screen_layout),
+                         SDL_GetError());
+            options.screen_layout = presented_layout;
+            return;
+        }
+        destroy_presentation(presentation);
+        presentation = rebuilt;
+        presented_layout = options.screen_layout;
+        refresh_layout_geometry();
+        std::fprintf(stderr, "[sdl] layout=%s\n",
+                     nds_screen_layout_name(options.screen_layout));
+    };
     auto finish_runtime_menu_input = [&](bool was_open) {
         if (runtime_menu_state.close_requested) {
             runtime_menu_state.close_requested = false;
             if (runtime_ui) recomp_runtime_ui_close(runtime_ui);
+        }
+        if (runtime_menu_state.layout_changed) {
+            runtime_menu_state.layout_changed = false;
+            apply_screen_layout();
         }
         if (!was_open && runtime_menu_open())
             clear_gameplay_input_for_runtime_menu();

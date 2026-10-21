@@ -1,9 +1,12 @@
 #include "frontend.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -35,6 +38,53 @@ int main() {
         !require(std::string(nds_screen_layout_name(layout)) == "book-left") ||
         !require(!nds_parse_screen_layout("sideways", &layout)))
         return 1;
+
+    {
+        // Banner title: English line block at banner + 0x340, publisher
+        // line dropped; header title when there is no banner.
+        std::vector<uint8_t> rom(0x1000, 0);
+        const char header[] = "HOTELDUSK";
+        std::copy(header, header + 9, rom.begin());
+        if (!require(nds_rom_banner_title(rom.data(), rom.size()) ==
+                     "HOTELDUSK"))
+            return 40;
+        rom[0x68] = 0x00;
+        rom[0x69] = 0x08;   // banner at 0x800
+        const char16_t english[] = u"Hotel Dusk\nRoom 215\nNintendo";
+        for (size_t i = 0; english[i] != 0; ++i) {
+            rom[0x800 + 0x340 + i * 2] = static_cast<uint8_t>(english[i]);
+            rom[0x800 + 0x340 + i * 2 + 1] =
+                static_cast<uint8_t>(english[i] >> 8);
+        }
+        if (!require(nds_rom_banner_title(rom.data(), rom.size()) ==
+                     "Hotel Dusk Room 215") ||
+            !require(nds_rom_banner_title(nullptr, 0).empty()))
+            return 41;
+
+        const std::filesystem::path settings =
+            std::filesystem::temp_directory_path() /
+            "ndsrecomp_runtime_layout_test.txt";
+        {
+            std::ofstream out(settings);
+            out << "settings_version=12\r\nscreen_layout=book-left\r\n";
+        }
+        NdsScreenLayout saved = NdsScreenLayout::Stacked;
+        const bool loaded =
+            nds_load_runtime_screen_layout(settings.string(), &saved);
+        {
+            std::ofstream out(settings);
+            out << "mouse_sensitivity=100\n";
+        }
+        NdsScreenLayout untouched = NdsScreenLayout::Separate;
+        const bool absent =
+            nds_load_runtime_screen_layout(settings.string(), &untouched);
+        std::filesystem::remove(settings);
+        if (!require(loaded) ||
+            !require(saved == NdsScreenLayout::BookLeftHanded) ||
+            !require(!absent) ||
+            !require(untouched == NdsScreenLayout::Separate))
+            return 42;
+    }
 
     NdsFullscreenMode fullscreen = NdsFullscreenMode::Off;
     if (!require(nds_parse_fullscreen_mode("off", &fullscreen)) ||
