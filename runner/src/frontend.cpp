@@ -2223,6 +2223,15 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     const TouchMapping touch_mapping{
         options.screen_layout, bottom_logical_width,
         presentation.canvas_width, presentation.screen_widths[1]};
+    // Relative stylus input (mouse deltas, stick) arrives along the window's
+    // axes; on a turned book screen it must move along the screen's own.
+    auto turn_stylus_delta = [&](float& dx, float& dy) {
+        if (!presentation.book) return;
+        const float window_dx = dx;
+        const float window_dy = dy;
+        nds_book_turn_delta(presentation.book_left_handed, window_dx,
+                            window_dy, &dx, &dy);
+    };
     std::fprintf(stderr,
         "[sdl] layout=%s fullscreen=%s adaptive=%s supersampling=%ux aa=%ux "
         "internal=%ux\n",
@@ -3567,12 +3576,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 (event.motion.windowID == presentation.window_ids[0] ||
                  is_presentation_window(event.motion.windowID) ||
                  event.motion.windowID == 0)) {
+                float stylus_dx = static_cast<float>(event.motion.xrel);
+                float stylus_dy = static_cast<float>(event.motion.yrel);
+                turn_stylus_delta(stylus_dx, stylus_dy);
                 mph_virtual_x +=
-                    static_cast<float>(event.motion.xrel) *
-                    options.virtual_stylus.sensitivity * 0.01f;
+                    stylus_dx * options.virtual_stylus.sensitivity * 0.01f;
                 mph_virtual_y +=
-                    static_cast<float>(event.motion.yrel) *
-                    (256.0f / 192.0f) *
+                    stylus_dy * (256.0f / 192.0f) *
                     options.virtual_stylus.sensitivity * 0.01f;
                 mph_virtual_x = std::clamp(mph_virtual_x, 0.0f, 255.0f);
                 mph_virtual_y = std::clamp(mph_virtual_y, 0.0f, 191.0f);
@@ -3586,21 +3596,26 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                     mph_prime_held[static_cast<size_t>(
                         MphPrimeAction::VirtualStylus)];
                 if (prime_virtual_stylus) {
-                    mph_virtual_x +=
-                        static_cast<float>(event.motion.xrel) *
+                    float stylus_dx = static_cast<float>(event.motion.xrel);
+                    float stylus_dy = static_cast<float>(event.motion.yrel);
+                    turn_stylus_delta(stylus_dx, stylus_dy);
+                    mph_virtual_x += stylus_dx *
                         options.mph_virtual_stylus_sensitivity * 0.01f;
-                    mph_virtual_y +=
-                        static_cast<float>(event.motion.yrel) *
-                        (256.0f / 192.0f) *
+                    mph_virtual_y += stylus_dy * (256.0f / 192.0f) *
                         options.mph_virtual_stylus_sensitivity * 0.01f;
                     mph_virtual_x = std::clamp(mph_virtual_x, 0.0f, 255.0f);
                     mph_virtual_y = std::clamp(mph_virtual_y, 0.0f, 191.0f);
                 } else if (options.relative_mouse_direct_aim) {
                     relative_delta_x += event.motion.xrel;
                     relative_delta_y += event.motion.yrel;
-                } else if (relative_mouse.move(event.motion.xrel,
-                                               event.motion.yrel)) {
-                    nds_set_touch(relative_mouse.x(), relative_mouse.y(), true);
+                } else {
+                    float touch_dx = static_cast<float>(event.motion.xrel);
+                    float touch_dy = static_cast<float>(event.motion.yrel);
+                    turn_stylus_delta(touch_dx, touch_dy);
+                    if (relative_mouse.move(static_cast<int32_t>(touch_dx),
+                                            static_cast<int32_t>(touch_dy)))
+                        nds_set_touch(relative_mouse.x(), relative_mouse.y(),
+                                      true);
                 }
             }
             if (sdl_window_event_is(event, SDL_EVENT_WINDOW_MOUSE_LEAVE) &&
@@ -3720,9 +3735,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                     const float rate = curved * curved * 5.0f *
                         (options.virtual_stylus.pad_sensitivity / 100.0f) /
                         mag;
-                    virtual_stylus_pad_rem_x += rx * rate;
-                    virtual_stylus_pad_rem_y += ry * rate *
-                        (256.0f / 192.0f);
+                    float stick_dx = rx * rate;
+                    float stick_dy = ry * rate;
+                    turn_stylus_delta(stick_dx, stick_dy);
+                    virtual_stylus_pad_rem_x += stick_dx;
+                    virtual_stylus_pad_rem_y += stick_dy * (256.0f / 192.0f);
                     const int32_t pad_x =
                         static_cast<int32_t>(virtual_stylus_pad_rem_x);
                     const int32_t pad_y =

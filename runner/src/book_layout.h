@@ -29,6 +29,12 @@ bool nds_book_logical_to_screen(bool left_handed, const NdsLogicalRect& area,
                                 float logical_x, float logical_y,
                                 float* screen_x, float* screen_y);
 
+// A movement along the window's axes -> the same movement along the turned
+// screen's own axes, for relative pointer and stick input (exact: a swap and
+// a sign, so integer deltas stay integers).
+void nds_book_turn_delta(bool left_handed, float dx, float dy,
+                         float* screen_dx, float* screen_dy);
+
 // Texture coordinates -> logical point (inverse of the above).
 void nds_book_screen_to_logical(bool left_handed, const NdsLogicalRect& area,
                                 float screen_x, float screen_y,
