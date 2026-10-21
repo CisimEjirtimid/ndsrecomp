@@ -55,6 +55,29 @@ void nds_book_turn_delta(bool left_handed, float dx, float dy,
     }
 }
 
+uint16_t nds_book_turn_dpad(bool left_handed, uint16_t pressed) {
+    // Each window direction is a unit movement; turning it gives the DS
+    // axis it runs along. Per bit, so opposite presses survive as pressed.
+    static constexpr struct { uint16_t bit; float dx, dy; } kDirs[] = {
+        {1u << 4, 1.0f, 0.0f},    // Right
+        {1u << 5, -1.0f, 0.0f},   // Left
+        {1u << 6, 0.0f, -1.0f},   // Up
+        {1u << 7, 0.0f, 1.0f},    // Down
+    };
+    uint16_t out = static_cast<uint16_t>(pressed & ~0x00F0u);
+    for (const auto& dir : kDirs) {
+        if (!(pressed & dir.bit)) continue;
+        float sx = 0.0f;
+        float sy = 0.0f;
+        nds_book_turn_delta(left_handed, dir.dx, dir.dy, &sx, &sy);
+        if (sx > 0.0f) out |= 1u << 4;
+        else if (sx < 0.0f) out |= 1u << 5;
+        else if (sy < 0.0f) out |= 1u << 6;
+        else out |= 1u << 7;
+    }
+    return out;
+}
+
 void nds_book_screen_to_logical(bool left_handed, const NdsLogicalRect& area,
                                 float screen_x, float screen_y,
                                 float* logical_x, float* logical_y) {

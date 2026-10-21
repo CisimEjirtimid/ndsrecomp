@@ -84,6 +84,23 @@ int main() {
             return 10;
     }
 
+    // D-pad: right-handed (console turned counter-clockwise), on-screen Up
+    // is the DS Right button, Right is Down, Down is Left, Left is Up.
+    constexpr uint16_t kR = 1u << 4, kL = 1u << 5, kU = 1u << 6, kD = 1u << 7;
+    if (!require(nds_book_turn_dpad(false, kU) == kR) ||
+        !require(nds_book_turn_dpad(false, kR) == kD) ||
+        !require(nds_book_turn_dpad(false, kD) == kL) ||
+        !require(nds_book_turn_dpad(false, kL) == kU) ||
+        // Left-handed is the mirror.
+        !require(nds_book_turn_dpad(true, kU) == kL) ||
+        !require(nds_book_turn_dpad(true, kR) == kU) ||
+        !require(nds_book_turn_dpad(true, kD) == kR) ||
+        !require(nds_book_turn_dpad(true, kL) == kD) ||
+        // Diagonals turn together; A (bit 0) and Start (bit 3) pass through.
+        !require(nds_book_turn_dpad(false, kU | kR | 0x0009u) ==
+                 (kR | kD | 0x0009u)))
+        return 11;
+
     // The two transforms are inverses for both hands.
     for (const bool left_handed : {false, true}) {
         const NdsLogicalRect area =
