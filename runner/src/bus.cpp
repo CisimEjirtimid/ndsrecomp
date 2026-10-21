@@ -344,10 +344,14 @@ inline void ring_push(uint8_t write, uint8_t width, uint32_t addr, uint32_t valu
 // Resolve an address to a backing pointer for the active CPU. Returns
 // nullptr for unmapped / I-O addresses (handled separately). `len` is the
 // access width for bounds checks.
+// True while an ARM9 DMA channel owns the bus (bus_dma_master_begin/end):
+// the TCMs are CPU-private and must not answer.
+bool g_bus_dma_master = false;
+
 uint8_t* resolve(uint32_t addr, uint32_t len) {
     const bool arm9 = (g_nds_active == NDS_ARM9);
 
-    if (arm9) {
+    if (arm9 && !g_bus_dma_master) {
         // ITCM: responds across its virtual region [0, itcm_size) (the DS
         // firmware programs a 32 MB span), with the 32 KB physical backing
         // MIRRORED every 32 KB within that span. itcm_size is the virtual
@@ -584,16 +588,33 @@ void bus_fast_refresh() {
                    g_itcm_generation.data(), 0x00007FFFu};
     g_busf_dtcm = {g_dtcm.data(), g_dtcm_written.data(),
                    g_dtcm_generation.data(), 0x00003FFFu};
+    // A refresh inside a DMA scope (e.g. a DMA write to WRAMCNT) must not
+    // re-expose the TCMs to the DMA master; bus_dma_master_end republishes.
     g_busf_itcm_limit =
-        (g_cp15.itcm_enable && g_cp15.itcm_size)
+        (g_cp15.itcm_enable && g_cp15.itcm_size && !g_bus_dma_master)
             ? std::min<uint32_t>(g_cp15.itcm_size, 0x02000000u)
             : 0u;
     g_busf_dtcm_base = g_cp15.dtcm_base;
     g_busf_dtcm_limit =
-        (g_cp15.dtcm_enable && g_cp15.dtcm_size)
+        (g_cp15.dtcm_enable && g_cp15.dtcm_size && !g_bus_dma_master)
             ? std::min<uint32_t>(g_cp15.dtcm_size,
                                  static_cast<uint32_t>(g_dtcm.size()))
             : 0u;
+}
+
+void bus_dma_master_begin() {
+    if (g_nds_active != NDS_ARM9 || g_bus_dma_master) return;
+    g_bus_dma_master = true;
+    // The inline fast path classifies TCM hits purely by these limits, so
+    // zeroing them keeps the CPU hot path free of a per-access DMA check.
+    g_busf_itcm_limit = 0u;
+    g_busf_dtcm_limit = 0u;
+}
+
+void bus_dma_master_end() {
+    if (!g_bus_dma_master) return;
+    g_bus_dma_master = false;
+    bus_fast_refresh();
 }
 
 void bus_load_arm9_bios(const uint8_t* p, uint32_t n) {
