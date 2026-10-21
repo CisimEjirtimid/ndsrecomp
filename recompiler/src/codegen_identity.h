@@ -57,7 +57,11 @@ namespace ndsrecomp {
 //     code-timing class — instead of a runtime_code_cycles(pc) call, and
 //     condition guards call the inline arm_cond_passes_i. Emitted cycle
 //     counts and tick boundaries are unchanged.
-inline constexpr unsigned kCodegenVersion = 3;
+// 4 — ARM9 LDM/POP that loads PC ticks arm9_cycle_combine with
+//     arm9_ldm_pc_numc(target) instead of its own fetch cost: melonDS A_LDM /
+//     T_POP run JumpTo before AddCycles_CDI. Emitted cycle counts change for
+//     every such instruction.
+inline constexpr unsigned kCodegenVersion = 4;
 
 // The string `--codegen-identity` prints and the shard provider identity
 // folds. Tagged so that a hash of it can never collide with a bare integer

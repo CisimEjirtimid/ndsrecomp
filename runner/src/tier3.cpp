@@ -468,17 +468,20 @@ void tier3_run(uint32_t /*entry*/) {
                 : arm7_refill_cycles(target);
         } else if (g_nds_active == NDS_ARM9) {
             const uint32_t numI = condition_passed ? arm9_internal_cost(in) : 0u;
-            cyc = arm9_cycle_combine(code_correction, g_bus.data_cycles,
+            const bool branched = r == Interpreter::Result::Branched;
+            const uint32_t target = (ic.R[15] & ~1u) | (ic.cpsr.t ? 1u : 0u);
+            // LDM/POP to PC: melonDS runs JumpTo before AddCycles_CDI, so the
+            // combine's numC is the target's last pipeline fetch, not this
+            // instruction's own fetch (see arm9_ldm_pc_numc).
+            const uint32_t numC = (branched && in.op == armv4t::IrOp::LDM)
+                ? arm9_ldm_pc_numc(target) : code_correction;
+            cyc = arm9_cycle_combine(numC, g_bus.data_cycles,
                                      numI, g_bus.data_cycles ? 1u : 0u);
             // Loads, ALU writes to PC and exception returns first pay their
             // source instruction's C/CD/CI cost, then JumpTo refills from the
             // runtime target.  The portable interpreter's fixed +2 refill is
             // deliberately replaced by the target-region ARM9 model above.
-            if (r == Interpreter::Result::Branched) {
-                const uint32_t target = (ic.R[15] & ~1u) |
-                                        (ic.cpsr.t ? 1u : 0u);
-                cyc += arm9_refill_cycles(target);
-            }
+            if (branched) cyc += arm9_refill_cycles(target);
         } else {
             const bool had_data = g_bus.data_cycles != 0u;
             cyc = arm7_cycle_combine(

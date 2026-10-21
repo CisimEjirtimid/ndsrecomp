@@ -1546,6 +1546,24 @@ extern "C" uint32_t arm9_refill_cycles(uint32_t target) {
     return words * cc;
 }
 
+// ARM9 numC for a block load that writes PC (ARM LDM {..,pc}, Thumb POP {..,pc}).
+// melonDS A_LDM / T_POP call JumpTo BEFORE AddCycles_CDI, so the combine's
+// numC is the CodeCycles JumpTo left behind -- the LAST pipeline fetch at the
+// target -- gated by the NEW R15's (R15 & 2): ARM -> fetch at target+4; Thumb
+// odd-halfword target -> fetch at target+2; Thumb even-halfword target -> 0
+// (R15 = target+2 has bit 1 set). Single LDR/ALU PC writes add their cycles
+// before JumpTo and keep the source instruction's own numC.
+extern "C" uint32_t arm9_ldm_pc_numc(uint32_t target) {
+    const bool thumb = (target & 1u) != 0u;
+    const uint32_t addr = target & ~1u;
+    if (thumb && !(addr & 2u)) return 0u;
+    const uint32_t last = addr + (thumb ? 2u : 4u);
+    const Arm9CodeTiming timing = arm9_latch_code_timing(addr);
+    if (timing == Arm9CodeTiming::Itcm) return 1u;
+    if (timing == Arm9CodeTiming::Cached) return (last & 0x1Fu) ? 1u : 3u;
+    return timing == Arm9CodeTiming::MainRam ? 18u : 8u;
+}
+
 // ARM7 memory instructions use melonDS ARMv4::AddCycles_CD/CDI.  The old
 // flat `base + numD` expression is exact on fast same-bus regions, but it
 // overcounts accesses between BIOS/WRAM code and the 16-bit main-RAM bus

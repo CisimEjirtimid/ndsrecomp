@@ -22,6 +22,7 @@ EXPORTS
     g_nds_unwinding DATA
     g_runtime_cycles DATA
     g_runtime_live_transfer_trace DATA
+    arm9_ldm_pc_numc
     arm9_refill_cycles
     nds_register_dispatch
     nds_unregister_dispatch

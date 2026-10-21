@@ -615,6 +615,9 @@ NDS_HOT_INLINE int arm_cond_passes_i(unsigned cond) {
 // ISA in bit 0 (Thumb when set); each helper returns its CPU's clock units.
 uint32_t arm7_refill_cycles(uint32_t target);
 uint32_t arm9_refill_cycles(uint32_t target);
+// ARM9 numC for LDM/POP that loads PC: melonDS JumpTo runs before
+// AddCycles_CDI, so the combine sees the target's last pipeline fetch.
+uint32_t arm9_ldm_pc_numc(uint32_t target);
 
 // ARM9 per-instruction cycle COMBINE — melonDS's exact AddCycles_C /
 // AddCycles_CI / AddCycles_CD / AddCycles_CDI model (ARM.h). Given this
