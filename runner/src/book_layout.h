@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "relative_mouse_touch.h"
 
 // Book presentation: the console held sideways like a book (Hotel Dusk,
@@ -34,6 +36,12 @@ bool nds_book_logical_to_screen(bool left_handed, const NdsLogicalRect& area,
 // a sign, so integer deltas stay integers).
 void nds_book_turn_delta(bool left_handed, float dx, float dy,
                          float* screen_dx, float* screen_dy);
+
+// The D-pad turns with the console: maps the directions pressed relative to
+// the window (KEYINPUT bit layout, active-high: Right 4, Left 5, Up 6,
+// Down 7) to the DS buttons that point that way when the console is held
+// like the book. Other bits pass through unchanged.
+uint16_t nds_book_turn_dpad(bool left_handed, uint16_t pressed);
 
 // Texture coordinates -> logical point (inverse of the above).
 void nds_book_screen_to_logical(bool left_handed, const NdsLogicalRect& area,

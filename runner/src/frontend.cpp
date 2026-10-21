@@ -2540,10 +2540,15 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // stick never fights explicit D-pad presses.
     uint16_t stick_pressed = 0;
     auto publish_keys = [&]() {
-        nds_set_key_mask(static_cast<uint16_t>(
-            0x0FFFu &
-            ~(keyboard_pressed | controller_pressed | mouse_pressed |
-              mph_prime_pressed | stick_pressed)));
+        uint16_t pressed = static_cast<uint16_t>(
+            keyboard_pressed | controller_pressed | mouse_pressed |
+            mph_prime_pressed | stick_pressed);
+        // In a book layout the D-pad turns with the console: every source
+        // (keys, pad D-pad, stick) means a direction on the turned screen.
+        if (presentation.book)
+            pressed = nds_book_turn_dpad(presentation.book_left_handed,
+                                         pressed);
+        nds_set_key_mask(static_cast<uint16_t>(0x0FFFu & ~pressed));
     };
     publish_keys();
     nds_set_touch(0, 0, false);
