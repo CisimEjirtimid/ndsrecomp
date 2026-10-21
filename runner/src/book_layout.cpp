@@ -42,6 +42,19 @@ bool nds_book_logical_to_screen(bool left_handed, const NdsLogicalRect& area,
     return true;
 }
 
+// Differentiating the transforms above: counter-clockwise, screen x runs
+// along -v and screen y along u; clockwise, x along v and y along -u.
+void nds_book_turn_delta(bool left_handed, float dx, float dy,
+                         float* screen_dx, float* screen_dy) {
+    if (left_handed) {
+        *screen_dx = dy;
+        *screen_dy = -dx;
+    } else {
+        *screen_dx = -dy;
+        *screen_dy = dx;
+    }
+}
+
 void nds_book_screen_to_logical(bool left_handed, const NdsLogicalRect& area,
                                 float screen_x, float screen_y,
                                 float* logical_x, float* logical_y) {

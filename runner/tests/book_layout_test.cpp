@@ -61,6 +61,29 @@ int main() {
         !require(!nds_book_logical_to_screen(true, left_bottom, 10.0f, 288.0f,
                                              &sx, &sy))) return 7;
 
+    // A turned delta moves the stylus the way the cursor moved on screen:
+    // the mapped point of (start + delta) equals start + turned delta.
+    for (const bool left_handed : {false, true}) {
+        const NdsLogicalRect area =
+            nds_book_screen_area(left_handed, 1, 256, 256);
+        float x0 = 0.0f;
+        float y0 = 0.0f;
+        float x1 = 0.0f;
+        float y1 = 0.0f;
+        float dx = 0.0f;
+        float dy = 0.0f;
+        const float lx = static_cast<float>(area.x) + 60.0f;
+        const float ly = static_cast<float>(area.y) + 90.0f;
+        if (!require(nds_book_logical_to_screen(left_handed, area, lx, ly,
+                                                &x0, &y0)) ||
+            !require(nds_book_logical_to_screen(left_handed, area, lx + 7.0f,
+                                                ly - 3.0f, &x1, &y1)))
+            return 9;
+        nds_book_turn_delta(left_handed, 7.0f, -3.0f, &dx, &dy);
+        if (!require(near(x1 - x0, dx)) || !require(near(y1 - y0, dy)))
+            return 10;
+    }
+
     // The two transforms are inverses for both hands.
     for (const bool left_handed : {false, true}) {
         const NdsLogicalRect area =
