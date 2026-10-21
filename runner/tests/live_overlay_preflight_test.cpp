@@ -28,6 +28,7 @@ NdsBusFastWin g_busf_itcm = {};
 
 extern "C" uint32_t runtime_code_cycles(uint32_t) { return 0; }
 extern "C" uint32_t arm9_refill_cycles(uint32_t) { return 0; }
+extern "C" uint32_t arm9_ldm_pc_numc(uint32_t) { return 0; }
 extern "C" void runtime_dispatch_bad_entry(uint32_t) {}
 extern "C" void runtime_dispatch_with_exchange(uint32_t) {}
 // runtime_live_transfer became an inline disarmed-flag test in runtime_arm.h

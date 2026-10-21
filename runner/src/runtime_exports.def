@@ -2,6 +2,7 @@ EXPORTS
     arm7_cycle_combine
     arm7_refill_cycles
     arm9_code_fast_invalidate
+    arm9_ldm_pc_numc
     arm9_refill_cycles
     arm_cond_passes
     arm_set_nz

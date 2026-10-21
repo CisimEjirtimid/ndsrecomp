@@ -3,6 +3,6 @@
 # See recompiler/src/codegen_identity.h for the contract.
 # corpus_digest covers the test's INPUTS (cases, flags,
 # configs, page bytes); digest covers the C they emit.
-codegen_version 3
+codegen_version 4
 corpus_digest c39baee994e302ec7c0021ed0b9743a5bea67b34
-digest 8fce10d792e196b989f24b0227d02e974393298a
+digest 9f9e331f1cf79564ad630cb05bb5dd2b78b0215d
