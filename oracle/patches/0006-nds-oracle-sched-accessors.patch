@@ -1,0 +1,16 @@
+diff --git a/src/NDS.h b/src/NDS.h
+index 6e486e2..c998be0 100644
+--- a/src/NDS.h
++++ b/src/NDS.h
+@@ -429,6 +429,11 @@ public: // TODO: Encapsulate the rest of these members
+ 
+     u32 GetPC(u32 cpu) const;
+     u64 GetSysClockCycles(int num);
++#ifdef MELONDS_ORACLE_HOOKS
++    // ndsrecomp oracle: read-only views of scheduler state for trace rings.
++    u64 OracleSysTimestamp() const noexcept { return SysTimestamp; }
++    u32 OracleSchedListMask() const noexcept { return SchedListMask; }
++#endif
+     void NocashPrint(u32 cpu, u32 addr, bool appendNewline = true);
+ 
+     void MonitorARM9Jump(u32 addr);

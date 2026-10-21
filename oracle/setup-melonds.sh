@@ -30,12 +30,23 @@ fi
 # see patches/README.md for the hook points.)
 cd "$MELON_DIR"
 shopt -s nullglob
+# 0003 was authored against pristine melonDS and already contains the 0001
+# (SetIRQ) and 0002 (IO-write) hunks, while 0004 depends on the break macro
+# 0003 defines. Apply 0003 first so 0001/0002 are detected as contained
+# rather than blocking it.
+ordered=("$PATCHES_DIR"/0003-*.patch)
 for p in "$PATCHES_DIR"/*.patch; do
+    case "$(basename "$p")" in 0003-*) ;; *) ordered+=("$p") ;; esac
+done
+for p in "${ordered[@]}"; do
     if git apply --check "$p" >/dev/null 2>&1; then
         echo "==> Applying $(basename "$p")"
         git apply "$p"
+    elif git apply --check -R "$p" >/dev/null 2>&1; then
+        echo "==> $(basename "$p") already applied — skipping"
     else
-        echo "==> $(basename "$p") already applied (or N/A) — skipping"
+        echo "==> ERROR: $(basename "$p") neither applies nor is already present" >&2
+        exit 1
     fi
 done
 
