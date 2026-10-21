@@ -1807,9 +1807,12 @@ int main(int argc, char** argv) {
             coverage_manifest_set_output(
                 base.empty() ? "nds" : base.string().c_str());
         }
-        coverage_manifest_set_identity(rom_sha1.c_str(), rom_name.c_str(),
-                                       NDS_RUNNER_BUILD_ID);
     }
+    // Set even when the exit-time manifest is disabled: the debug server's
+    // coverage_manifest command still writes one, and the ingest refuses a
+    // manifest that does not name its ROM.
+    coverage_manifest_set_identity(rom_sha1.c_str(), rom_name.c_str(),
+                                   NDS_RUNNER_BUILD_ID);
     // Written from every exit path below. Failure is reported and never
     // changes the process's exit status: losing a diagnostic dump must not
     // turn a good run into a failed one for the player.
