@@ -999,12 +999,12 @@ static void usage(const char* argv0)
 {
     fprintf(stderr,
         "usage: %s --bios9 <f> --bios7 <f> --firmware <f> "
-        "[--boot firmware] [--port 19843]\n", argv0);
+        "[--rom game.nds [--save game.sav]] [--boot firmware] [--port 19843]\n", argv0);
 }
 
 int main(int argc, char** argv)
 {
-    std::string bios9, bios7, firmware, boot = "firmware";
+    std::string bios9, bios7, firmware, rom, save, boot = "firmware";
     uint16_t port = 19843;
 
     for (int i = 1; i < argc; i++)
@@ -1014,6 +1014,8 @@ int main(int argc, char** argv)
         if      (a == "--bios9")    bios9 = next();
         else if (a == "--bios7")    bios7 = next();
         else if (a == "--firmware") firmware = next();
+        else if (a == "--rom")      rom = next();
+        else if (a == "--save")     save = next();
         else if (a == "--boot")     boot = next();
         else if (a == "--port")     port = (uint16_t)strtoul(next().c_str(), nullptr, 10);
         else { fprintf(stderr, "unknown arg: %s\n", a.c_str()); usage(argv[0]); return 2; }
@@ -1061,6 +1063,28 @@ int main(int argc, char** argv)
         // 128 KB / non-bootable firmware would force direct boot — not allowed.
         fprintf(stderr, "nds_oracle: firmware is not bootable (would require direct boot)\n");
         return 1;
+    }
+    if (!rom.empty())
+    {
+        // Slot-1 cartridge for title comparisons. The real BIOS/firmware path
+        // launches it (the firmware's own startup mode decides menu vs auto);
+        // no direct boot. Save bytes are read only; the oracle never writes
+        // them back.
+        std::vector<uint8_t> romdata, savedata;
+        if (!readFile(rom, romdata)) { fprintf(stderr, "cannot read rom: %s\n", rom.c_str()); return 1; }
+        NDSCart::NDSCartArgs cartargs{};
+        if (!save.empty())
+        {
+            if (!readFile(save, savedata)) { fprintf(stderr, "cannot read save: %s\n", save.c_str()); return 1; }
+            cartargs.SRAM = std::make_unique<u8[]>(savedata.size());
+            std::memcpy(cartargs.SRAM.get(), savedata.data(), savedata.size());
+            cartargs.SRAMLength = (u32)savedata.size();
+        }
+        auto cart = NDSCart::ParseROM(romdata.data(), (u32)romdata.size(), nullptr, std::move(cartargs));
+        if (!cart) { fprintf(stderr, "cannot parse rom: %s\n", rom.c_str()); return 1; }
+        nds->SetNDSCart(std::move(cart));
+        fprintf(stderr, "nds_oracle: cartridge %s (%zu bytes), save %u bytes\n",
+                rom.c_str(), romdata.size(), nds->GetNDSSaveLength());
     }
     nds->Reset();   // begins at the real BIOS reset vectors (firmware boot, LLE)
 
