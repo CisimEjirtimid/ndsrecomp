@@ -40,6 +40,15 @@ bool nds_parse_screen_layout(const std::string& value,
         *out = NdsScreenLayout::Separate;
         return true;
     }
+    if (normalized == "book" || normalized == "book-right" ||
+        normalized == "book_right") {
+        *out = NdsScreenLayout::Book;
+        return true;
+    }
+    if (normalized == "book-left" || normalized == "book_left") {
+        *out = NdsScreenLayout::BookLeftHanded;
+        return true;
+    }
     return false;
 }
 
@@ -420,7 +429,13 @@ bool nds_parse_local_wireless_base_port(const std::string& value,
 }
 
 const char* nds_screen_layout_name(NdsScreenLayout value) {
-    return value == NdsScreenLayout::Separate ? "separate" : "stacked";
+    switch (value) {
+    case NdsScreenLayout::Separate: return "separate";
+    case NdsScreenLayout::Book: return "book";
+    case NdsScreenLayout::BookLeftHanded: return "book-left";
+    case NdsScreenLayout::Stacked: break;
+    }
+    return "stacked";
 }
 
 const char* nds_frame_interpolation_name(NdsFrameInterpolation value) {
@@ -552,7 +567,8 @@ bool nds_load_frontend_config(const std::string& path,
                                          &options->screen_layout)) {
                 if (error) {
                     *error =
-                        "display.screen_layout must be stacked or separate";
+                        "display.screen_layout must be stacked, separate, "
+                        "book or book-left";
                 }
                 return false;
             }

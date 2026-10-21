@@ -457,6 +457,7 @@ add_executable(nds_runner
     src/debug_server.cpp
     src/frontend_config.cpp
     src/relative_mouse_touch.cpp
+    src/book_layout.cpp
     "${NDS_RECOMP_UI_ROOT}/src/common/recomp_runtime_ui.c"
     src/frontend.cpp
     src/main.cpp
@@ -813,6 +814,12 @@ ndsrecomp_link_tomlpp(frontend_config_test)
       src/relative_mouse_touch.cpp)
   target_include_directories(relative_mouse_touch_test PRIVATE src)
   add_test(NAME relative_mouse_touch_test COMMAND relative_mouse_touch_test)
+
+  add_executable(book_layout_test
+      tests/book_layout_test.cpp
+      src/book_layout.cpp)
+  target_include_directories(book_layout_test PRIVATE src)
+  add_test(NAME book_layout_test COMMAND book_layout_test)
 
   add_executable(title_patches_test
       tests/title_patches_test.cpp

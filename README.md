@@ -219,7 +219,7 @@ independent:
 sha1 = "40-lowercase-hex-digits"
 
 [display]
-screen_layout = "stacked"          # stacked | separate
+screen_layout = "stacked"          # stacked | separate | book | book-left
 adaptive_widescreen = "none"       # none | top | bottom | both
 adaptive_capability = "top"        # exact-ROM capability; same choices
 adaptive_width = 448               # even width from 256 through 448
@@ -237,7 +237,14 @@ save_size = 8192                    # bytes; nonzero power of two
 
 `screen_layout = "separate"` creates independently movable top and bottom
 windows. Pointer input is accepted only from the physical bottom-screen
-window; keyboard input remains shared by the DS session. Adaptive widescreen
+window; keyboard input remains shared by the DS session. `book` is for titles
+held sideways like a book (Hotel Dusk, Brain Age): one window, each screen
+turned a quarter turn counter-clockwise, the top screen on the left and the
+touchscreen on the right, with pointer input turned back into native touch
+coordinates. `book-left` is the left-handed mirror (clockwise, touchscreen on
+the left). Only presentation turns: guest framebuffers are unchanged, and the
+runtime menu and savestate notices stay upright. Relative-mouse touch deltas
+are not turned. Adaptive widescreen
 is a title capability, not framebuffer stretching: unsupported screen choices
 are rejected. A title may expose the top screen, bottom screen, or both
 independently. The native 256x192 compositor remains the parity path; adaptive
