@@ -46,12 +46,12 @@ typedef struct NdsTitleHost {
      * shared WRAM, VRAM, palettes, OAM, I/O registers without read side
      * effects). Returns `len` on success. */
     uint32_t (*read)(uint32_t addr, void* dst, uint32_t len);
-    /* Frames started since power-on (physical line 0 of each frame). */
+    /* VBlanks since the plugin started. */
     uint64_t (*frame)(void);
     /* One line to the runner's log, prefixed with the plugin name. */
     void (*log)(const char* message);
     /* Write guest main RAM (0x02000000-0x023FFFFF) as the ARM9 would, at the
-     * point of the call (frame start). Returns `len`, or 0 when refused. */
+     * point of the call (VBlank start). Returns `len`, or 0 when refused. */
     uint32_t (*write)(uint32_t addr, const void* src, uint32_t len);
 } NdsTitleHost;
 
@@ -78,9 +78,9 @@ typedef struct NdsTitlePlugin {
     const char* rom_sha1;
     /* Called once before the first frame; returning 0 disables the plugin. */
     int (*start)(const NdsTitleHost* host);
-    /* Each frame at physical line 0, before the guest runs the frame: observe
-     * the guest, then rewrite `io` (may be NULL) to translate the player's
-     * input. Both may be NULL. */
+    /* At the start of every VBlank, before the VBlank IRQ (where games run
+     * their per-frame logic): observe the guest, then rewrite `io` (may be
+     * NULL) to translate the player's input. Both may be NULL. */
     void (*frame)(const NdsTitleHost* host, NdsTitleInput* io);
     /* Short human-readable state for the debug server and logs; writes at most
      * `cap` bytes including the terminator. May be NULL. */

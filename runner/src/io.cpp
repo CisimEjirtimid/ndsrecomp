@@ -3111,7 +3111,6 @@ void nds_tick_display(unsigned long long cyc) {
             // melonDS GPU::StartFrame: an aborted 3D frame restarts its
             // renderer before scanline 0 of the new frame.
             nds_title_patches_start_frame();
-            nds_title_plugin_start_frame();
             nds_gpu2d_start_frame();
             nds_gpu3d_start_frame();
             g_vcount = 0;
@@ -3137,6 +3136,9 @@ void nds_tick_display(unsigned long long cyc) {
             g_in_vblank = false;
         } else if (g_vcount == 192u) {
             g_in_vblank = true;
+            // Before the VBlank IRQ: games run their per-frame logic from
+            // here, so the plugin's input and hooks land ahead of it.
+            nds_title_plugin_vblank();
             if (g_dispstat[0] & 0x0008u) {
                 ++g_counts.vblank9;
                 nds_raise_irq(0, 0x00000001u);

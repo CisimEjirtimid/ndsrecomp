@@ -94,7 +94,7 @@ void nds_title_plugin_latch_touch(uint16_t x, uint16_t y, bool down) {
     g_host.touch_y = down ? y : 0u;
 }
 
-void nds_title_plugin_start_frame() {
+void nds_title_plugin_vblank() {
     if (!g_plugin) return;
     ++g_frame;
     NdsTitleInput io = g_host;
