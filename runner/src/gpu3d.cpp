@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "io.h"
 #include "gpu2d.h"
@@ -763,6 +764,113 @@ uint32_t nds_gpu3d_compute_output_texture_hires() {
 #endif
 }
 
+#if defined(NDS_HAVE_COMPUTE_RENDERER)
+// Hi-res readback for the HD display-capture path: queued into a pack buffer
+// right after each frame is rasterized at VCount 215, and consumed at the
+// next VBlank -- the frame whose scanlines used that raster -- by which time
+// the copy has long completed.
+bool g_hires_requested = false;
+GLuint g_hires_pbo = 0;
+size_t g_hires_pbo_bytes = 0;
+GLsync g_hires_fence = nullptr;
+uint32_t g_hires_width = 0;
+uint32_t g_hires_height = 0;
+std::vector<uint8_t> g_hires_copy;
+
+bool hires_extent(uint32_t* width, uint32_t* height) {
+    if (!nds_gpu3d_compute_output_texture_hires()) return false;
+    const uint32_t scale = nds_gpu3d_internal_scale();
+    *width = g_nds.GPU.GPU3D.GetRenderWidth() * scale;
+    *height = 192u * scale;
+    return true;
+}
+
+void hires_submit() {
+    uint32_t w = 0;
+    uint32_t h = 0;
+    if (!g_hires_requested || !hires_extent(&w, &h)) return;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+    clear_compute_gl_errors();
+    if (!g_hires_pbo) glGenBuffers(1, &g_hires_pbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, g_hires_pbo);
+    if (bytes != g_hires_pbo_bytes) {
+        glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(bytes),
+                     nullptr, GL_STREAM_READ);
+        g_hires_pbo_bytes = bytes;
+    }
+    glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glBindTexture(GL_TEXTURE_2D, nds_gpu3d_compute_output_texture_hires());
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    if (g_hires_fence) glDeleteSync(g_hires_fence);
+    g_hires_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+    g_hires_width = w;
+    g_hires_height = h;
+    if (compute_gl_stage_failed("hi-res readback submit")) {
+        if (g_hires_fence) glDeleteSync(g_hires_fence);
+        g_hires_fence = nullptr;
+    }
+}
+#endif
+
+void nds_gpu3d_set_hires_readback(bool enabled) {
+#if defined(NDS_HAVE_COMPUTE_RENDERER)
+    g_hires_requested = enabled;
+#else
+    (void)enabled;
+#endif
+}
+
+const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height) {
+#if defined(NDS_HAVE_COMPUTE_RENDERER)
+    uint32_t w = 0;
+    uint32_t h = 0;
+    if (!hires_extent(&w, &h)) return nullptr;
+    const size_t bytes = static_cast<size_t>(w) * h * 4u;
+    g_hires_copy.resize(bytes);
+    clear_compute_gl_errors();
+    bool done = false;
+    if (g_hires_fence && g_hires_width == w && g_hires_height == h) {
+        constexpr GLuint64 kTimeoutNs = 1000000000ull;
+        const GLenum status = glClientWaitSync(
+            g_hires_fence, GL_SYNC_FLUSH_COMMANDS_BIT, kTimeoutNs);
+        if (status != GL_WAIT_FAILED && status != GL_TIMEOUT_EXPIRED) {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, g_hires_pbo);
+            const void* mapped = glMapBufferRange(
+                GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes),
+                GL_MAP_READ_BIT);
+            if (mapped) {
+                std::memcpy(g_hires_copy.data(), mapped, bytes);
+                done = glUnmapBuffer(GL_PIXEL_PACK_BUFFER) == GL_TRUE;
+            }
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        }
+    }
+    if (g_hires_fence) glDeleteSync(g_hires_fence);
+    g_hires_fence = nullptr;
+    if (!done) {
+        // Nothing queued for this frame (just enabled, or a renderer
+        // rebuild): until VCount 215 the texture still holds the same frame.
+        glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glBindTexture(GL_TEXTURE_2D, nds_gpu3d_compute_output_texture_hires());
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                      g_hires_copy.data());
+    }
+    if (compute_gl_stage_failed("hi-res readback")) return nullptr;
+    if (width) *width = w;
+    if (height) *height = h;
+    return g_hires_copy.data();
+#else
+    (void)width;
+    (void)height;
+    return nullptr;
+#endif
+}
+
 bool nds_gpu3d_use_compute_renderer() {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     g_compute_shader_setup_failed = false;
@@ -1202,8 +1310,10 @@ void nds_gpu3d_vcount215() {
     if (!profiling()) {
         g_nds.GPU.GPU3D.VCount215(g_nds.GPU);
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-        if (g_nds.GPU.GPU3D.IsRendererAccelerated())
+        if (g_nds.GPU.GPU3D.IsRendererAccelerated()) {
             g_compute_rendered_frame = true;
+            hires_submit();
+        }
         if (g_compute_rendered_frame &&
             (compute_readback_overlap() || g_display_readback_latency) &&
             (nds_gpu2d_requires_3d_readback() ||
@@ -1215,8 +1325,10 @@ void nds_gpu3d_vcount215() {
     const auto start = ProfileClock::now();
     g_nds.GPU.GPU3D.VCount215(g_nds.GPU);
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
-    if (g_nds.GPU.GPU3D.IsRendererAccelerated())
+    if (g_nds.GPU.GPU3D.IsRendererAccelerated()) {
         g_compute_rendered_frame = true;
+        hires_submit();
+    }
 #endif
     profile_add(g_gpu3d_profile.vcount215_ns, start);
     ++g_gpu3d_profile.vcount215_calls;

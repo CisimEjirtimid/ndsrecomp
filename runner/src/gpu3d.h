@@ -68,6 +68,24 @@ bool nds_gpu3d_display_readback_latency();
 // carry the same RGB6/alpha5 values as the integer surface above, normalized
 // by 63 and 31. Zero unless an accelerated renderer is active at scale > 1.
 uint32_t nds_gpu3d_compute_output_texture_hires();
+// CPU copy of that high-resolution surface, row-major width x height, 4 bytes
+// per pixel as stored: (B6/63, G6/63, R6/63, A5/31) in UNORM8 -- note the DS
+// blue comes first. nds_gpu3d_hires_word() converts one pixel to the native
+// 3D word format. Synchronous readback on the renderer's thread; the pointer
+// stays valid until the next call. nullptr unless an accelerated renderer is
+// active at scale > 1. It holds the frame the 2D engine consumed until
+// VCount 215 rasterizes the next one.
+const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height);
+// Queue that copy asynchronously after every rasterization (VCount 215), so
+// the read at the next VBlank finds it complete instead of stalling.
+void nds_gpu3d_set_hires_readback(bool enabled);
+// One hi-res pixel -> RGB6 at bits 0/8/16, alpha5 at bits 24-28. Both UNORM8
+// quantizations are injective, so rounding recovers the exact integers.
+inline uint32_t nds_gpu3d_hires_word(const uint8_t* p) {
+    auto c6 = [](uint8_t v) { return (static_cast<uint32_t>(v) * 63u + 127u) / 255u; };
+    auto a5 = [](uint8_t v) { return (static_cast<uint32_t>(v) * 31u + 127u) / 255u; };
+    return c6(p[2]) | (c6(p[1]) << 8) | (c6(p[0]) << 16) | (a5(p[3]) << 24);
+}
 
 struct NdsGpu3dProfile {
     uint64_t vcount215_ns;

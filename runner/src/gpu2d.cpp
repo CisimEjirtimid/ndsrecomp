@@ -8,8 +8,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -1093,6 +1095,9 @@ struct LineJob {
     uint32_t capture_dstaddr = 0;
     uint32_t capture_dstbank = 0;
     uint32_t capture_count = 0;
+    // HD display capture: the frame sequence this line records under, or 0
+    // when the host-only HD capture path is off.
+    uint64_t hdcap_seq = 0;
 };
 
 // The set of BG layers this engine decodes on this line. Single source of
@@ -1112,10 +1117,17 @@ uint8_t bg_active_mask(const Unit& u, bool bg0_3d) {
 // This is the general-path twin of the dst-direct fast paths in
 // render_engine_line, which carry the same layer/priority/blend rules but
 // skip the 3D layer and the 6-bit intermediate.
+// HD display capture (see nds_gpu2d_set_hd_capture): a top-meta flag saying
+// the window shows BG0/3D at this pixel.
+constexpr uint32_t kHdCap3dVisible = 0x40u;
+
+// `hd_pairs`, when given, receives per pixel the top and below layers with
+// the 3D layer removed: {top colour, hd_meta(top) | kHdCap3dVisible,
+// below colour, hd_meta(below)}.
 void compose_line6(int engine, int y, const Unit& u, const uint8_t* palette,
                    const uint8_t* oam, const NdsVramRendererView& vram,
                    const uint32_t* line3d, bool bg0_3d, uint32_t* out,
-                   LineScratch& sc) {
+                   LineScratch& sc, uint32_t* hd_pairs = nullptr) {
     std::array<Pixel,256>& obj = sc.obj;
     std::array<uint8_t,256>& obj_window = sc.obj_window;
     const auto obj_start = profiling() ? std::chrono::steady_clock::now()
@@ -1161,6 +1173,19 @@ void compose_line6(int engine, int y, const Unit& u, const uint8_t* palette,
             push(Pixel{rgb6(static_cast<uint16_t>(c & 0x7FFFu)),
                        l.target, 0, l.prio, l.order, true});
         }
+        if (obj[x].valid && (window_mask & 0x10u)) push(obj[x]);
+        // (priority, order) is a total order, so pushing the 3D layer last
+        // yields the same pair an interleaved pass would; the pair before it
+        // is what the HD capture path re-inserts its hi-res 3D sample into.
+        const bool effects = (window_mask & 0x20u) != 0u;
+        if (hd_pairs) {
+            uint32_t* const p = hd_pairs + x * 4;
+            p[0] = top.color;
+            p[1] = hd_meta(top, effects) |
+                   ((window_mask & 0x01u) ? kHdCap3dVisible : 0u);
+            p[2] = below.color;
+            p[3] = hd_meta(below, effects);
+        }
         if (bg0_3d && line3d && (window_mask & 0x01u)) {
             const uint32_t c3 = line3d[x];
             const uint8_t a3 = static_cast<uint8_t>((c3 >> 24) & 0x1Fu);
@@ -1169,8 +1194,7 @@ void compose_line6(int engine, int y, const Unit& u, const uint8_t* palette,
             if (a3)
                 push(Pixel{c3 & 0x003F3F3Fu, 0x01u, 0, prio3d, 1, true, a3});
         }
-        if (obj[x].valid && (window_mask & 0x10u)) push(obj[x]);
-        out[x] = compose(u, top, below, (window_mask & 0x20u) != 0u);
+        out[x] = compose(u, top, below, effects);
     }
 }
 
@@ -1284,6 +1308,492 @@ void stage_capture(const Unit& u, int line, uint32_t width,
     }
 }
 
+// ---- HD display capture ----------------------------------------------------
+// See nds_gpu2d_set_hd_capture in gpu2d.h. Host-only: nothing here writes
+// guest state, and every input is either recorded by the line renderer or
+// read back from the 3D engine.
+
+// What one engine-A line was rendered with.
+struct HdCapLine {
+    uint64_t seq = 0;   // frame the record belongs to (0 = never recorded)
+    bool captured = false;  // DISPCAPCNT captured this line
+    uint32_t capture = 0;
+    uint32_t dispcnt = 0;
+    uint16_t bldcnt = 0;
+    uint16_t master_bright = 0;
+    uint8_t eva = 0, evb = 0, evy = 0;
+    uint8_t prio3d = 0;
+    uint8_t screen = 0;
+};
+struct HdCapFrame {
+    std::array<HdCapLine, 192> lines{};
+    // compose_line6's hd_pairs, 4 words per native pixel.
+    std::vector<uint32_t> pairs = std::vector<uint32_t>(256u * 192u * 4u);
+    // Capture source A exactly as the native capture consumed it.
+    std::vector<uint32_t> source_a = std::vector<uint32_t>(256u * 192u);
+};
+
+bool g_hdcap_enabled = false;
+uint64_t g_hdcap_seq = 0;                 // bumped at every frame start
+std::array<HdCapFrame, 2> g_hdcap_frames{};  // [render buffer]
+uint32_t g_hdcap_scale = 0;               // shadow resolution multiplier
+uint32_t g_hdcap_bank = 0;                // VRAM bank the shadow stands for
+bool g_hdcap_shadow_valid = false;
+// The capture bank at (256 * scale) x (192 * scale): what the hardware would
+// hold if it captured at the 3D raster's resolution.
+std::vector<uint16_t> g_hdcap_shadow;
+// The native bank as the guest held it after the previous frame's capture:
+// source B of this frame's capture when nothing else wrote the bank.
+std::array<uint16_t, 256 * 192> g_hdcap_mirror{};
+std::array<std::vector<uint32_t>, 2> g_hdcap_image{};  // [render buffer]
+std::array<bool, 2> g_hdcap_image_ok{};
+std::array<uint8_t, 2> g_hdcap_image_screen{};
+std::array<uint32_t, 2> g_hdcap_image_scale{};
+NdsGpu2dHdCaptureStats g_hdcap_stats{};
+
+// The per-frame HD passes are independent per native row and cost a few
+// milliseconds at 4x on one thread, so they are spread over a small pool of
+// persistent helpers; the calling (scheduler) thread takes rows as well.
+class HdCapPool {
+public:
+    ~HdCapPool() {
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            stop_ = true;
+        }
+        work_cv_.notify_all();
+        for (std::thread& t : threads_) t.join();
+    }
+
+    // fn(begin, end) over native rows [0, rows), in chunks.
+    void run(uint32_t rows, const std::function<void(uint32_t, uint32_t)>& fn) {
+        start();
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            fn_ = &fn;
+            rows_ = rows;
+            next_.store(0, std::memory_order_relaxed);
+            busy_ = static_cast<uint32_t>(threads_.size());
+            ++generation_;
+        }
+        work_cv_.notify_all();
+        take(fn, rows);
+        std::unique_lock<std::mutex> lock(m_);
+        done_cv_.wait(lock, [&] { return busy_ == 0u; });
+        fn_ = nullptr;
+    }
+
+private:
+    static constexpr uint32_t kChunk = 4;
+
+    void start() {
+        if (!threads_.empty()) return;
+        const unsigned hw = std::thread::hardware_concurrency();
+        const unsigned helpers = hw > 6u ? std::min(hw / 2u, 6u) : 1u;
+        for (unsigned i = 0; i < helpers; ++i)
+            threads_.emplace_back([this] { loop(); });
+    }
+
+    void take(const std::function<void(uint32_t, uint32_t)>& fn,
+              uint32_t rows) {
+        for (;;) {
+            const uint32_t begin =
+                next_.fetch_add(kChunk, std::memory_order_relaxed);
+            if (begin >= rows) return;
+            fn(begin, std::min(rows, begin + kChunk));
+        }
+    }
+
+    void loop() {
+        uint64_t seen = 0;
+        for (;;) {
+            const std::function<void(uint32_t, uint32_t)>* fn = nullptr;
+            uint32_t rows = 0;
+            {
+                std::unique_lock<std::mutex> lock(m_);
+                work_cv_.wait(lock,
+                              [&] { return stop_ || generation_ != seen; });
+                if (stop_) return;
+                seen = generation_;
+                fn = fn_;
+                rows = rows_;
+            }
+            take(*fn, rows);
+            {
+                std::lock_guard<std::mutex> lock(m_);
+                --busy_;
+            }
+            done_cv_.notify_one();
+        }
+    }
+
+    std::vector<std::thread> threads_;
+    std::mutex m_;
+    std::condition_variable work_cv_;
+    std::condition_variable done_cv_;
+    const std::function<void(uint32_t, uint32_t)>* fn_ = nullptr;
+    uint32_t rows_ = 0;
+    std::atomic<uint32_t> next_{0};
+    uint32_t busy_ = 0;
+    uint64_t generation_ = 0;
+    bool stop_ = false;
+};
+HdCapPool g_hdcap_pool;
+
+// Runs one frame's HD passes (image + shadow advance) off the scheduler
+// thread, overlapping the next frame's emulation. Everything a job reads stays
+// put until the next VBlank, which -- like the presenter -- waits for it
+// before touching the shadow, the image or the hi-res copy again.
+class HdCapWorker {
+public:
+    ~HdCapWorker() {
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        if (thread_.joinable()) thread_.join();
+    }
+
+    void submit(std::function<void()> job) {
+        wait();
+        if (!thread_.joinable()) thread_ = std::thread([this] { loop(); });
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            job_ = std::move(job);
+            pending_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    void wait() {
+        std::unique_lock<std::mutex> lock(m_);
+        cv_.wait(lock, [&] { return !pending_; });
+    }
+
+private:
+    void loop() {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock<std::mutex> lock(m_);
+                cv_.wait(lock, [&] { return stop_ || pending_; });
+                if (stop_) return;
+                job = std::move(job_);
+            }
+            job();
+            {
+                std::lock_guard<std::mutex> lock(m_);
+                pending_ = false;
+            }
+            cv_.notify_all();
+        }
+    }
+
+    std::thread thread_;
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::function<void()> job_;
+    bool pending_ = false;
+    bool stop_ = false;
+};
+HdCapWorker g_hdcap_worker;
+
+// One captured pixel: stage_capture's arithmetic for source A word `a6`
+// (6-bit composite, or 3D word with alpha when `src_a_3d`) and source B `b`.
+uint16_t hd_capture_pixel(uint32_t cap, bool src_a_3d, uint32_t a6,
+                          uint16_t b) {
+    const uint32_t rA = (a6 >> 1) & 0x1Fu;
+    const uint32_t gA = (a6 >> 9) & 0x1Fu;
+    const uint32_t bA = (a6 >> 17) & 0x1Fu;
+    const uint32_t aA = (!src_a_3d || (a6 >> 24)) ? 1u : 0u;
+    switch ((cap >> 29) & 3u) {
+        case 0:
+            return static_cast<uint16_t>(rA | (gA << 5) | (bA << 10) |
+                                         (aA << 15));
+        case 1:
+            return b;
+        default: {
+            const uint32_t eva = std::min<uint32_t>(cap & 0x1Fu, 16u);
+            const uint32_t evb = std::min<uint32_t>((cap >> 8) & 0x1Fu, 16u);
+            const uint32_t aB = b >> 15;
+            const uint32_t rD = std::min<uint32_t>(
+                ((rA * aA * eva) + ((b & 0x1Fu) * aB * evb) + 8u) >> 4, 0x1Fu);
+            const uint32_t gD = std::min<uint32_t>(
+                ((gA * aA * eva) + (((b >> 5) & 0x1Fu) * aB * evb) + 8u) >> 4,
+                0x1Fu);
+            const uint32_t bD = std::min<uint32_t>(
+                ((bA * aA * eva) + (((b >> 10) & 0x1Fu) * aB * evb) + 8u) >> 4,
+                0x1Fu);
+            const uint32_t aD = (eva > 0 ? aA : 0u) | (evb > 0 ? aB : 0u);
+            return static_cast<uint16_t>(rD | (gD << 5) | (bD << 10) |
+                                         (aD << 15));
+        }
+    }
+}
+
+// Line renderer side: record an engine-A general-path line (and, when it was
+// captured, its capture source A). Runs on whichever thread renders the line;
+// each line owns its own record and rows.
+void record_hd_capture_line(const LineJob& job, const Unit& u, bool captured,
+                            const uint32_t* comp6, const uint32_t* line3d) {
+    HdCapFrame& f = g_hdcap_frames[job.buffer & 1u];
+    if (captured) {
+        const bool src_a_3d = (u.capture & 0x01000000u) != 0;
+        const uint32_t* const source = src_a_3d ? line3d : comp6;
+        uint32_t* const dst = f.source_a.data() + job.y * 256;
+        if (source) std::copy_n(source, 256, dst);
+        else std::fill_n(dst, 256, 0u);
+    }
+    HdCapLine& line = f.lines[job.y];
+    line.captured = captured;
+    line.capture = u.capture;
+    line.dispcnt = u.dispcnt;
+    line.bldcnt = u.bldcnt;
+    line.master_bright = u.master_bright;
+    line.eva = u.eva;
+    line.evb = u.evb;
+    line.evy = u.evy;
+    line.prio3d = static_cast<uint8_t>(u.bgcnt[0] & 3u);
+    line.screen = static_cast<uint8_t>(job.screen[0]);
+    line.seq = job.hdcap_seq;
+}
+
+// The pattern this path reproduces: a full-frame 256x192 capture into the
+// bank that engine A displays in VRAM mode, source B (if used) being that
+// same bank, with BG0 carrying the 3D layer. Every line must agree.
+bool hd_capture_frame_eligible(const HdCapFrame& f) {
+    const HdCapLine& l0 = f.lines[0];
+    for (const HdCapLine& l : f.lines) {
+        if (l.seq != g_hdcap_seq || !l.captured || l.capture != l0.capture ||
+            l.dispcnt != l0.dispcnt || l.bldcnt != l0.bldcnt ||
+            l.eva != l0.eva || l.evb != l0.evb || l.evy != l0.evy ||
+            l.prio3d != l0.prio3d || l.screen != l0.screen)
+            return false;
+    }
+    const uint32_t cap = l0.capture;
+    const uint32_t dispcnt = l0.dispcnt;
+    const uint32_t bank = (cap >> 16) & 3u;
+    return ((cap >> 20) & 3u) == 3u &&           // 256x192
+           ((cap >> 18) & 3u) == 0u &&           // write offset 0
+           (cap & 0x02000000u) == 0u &&          // source B = VRAM
+           ((dispcnt >> 16) & 3u) == 2u &&       // VRAM display
+           ((dispcnt >> 18) & 3u) == bank &&     // ... of the capture bank
+           (dispcnt & 0x108u) == 0x108u &&       // BG0 on, as 3D
+           (dispcnt & 0x80u) == 0u &&            // not forced blank
+           nds_gpu3d_render_xpos() == 0u &&      // hi-res 3D is unscrolled
+           nds_vram_lcdc_mapped(bank);
+}
+
+// A frame that only shows the shadowed bank: every line displays it in VRAM
+// mode and none captured (the game stops re-capturing while the view is
+// still, and keeps showing the last result).
+bool hd_capture_display_only(const HdCapFrame& f) {
+    const HdCapLine& l0 = f.lines[0];
+    for (const HdCapLine& l : f.lines) {
+        if (l.seq != g_hdcap_seq || l.captured || l.dispcnt != l0.dispcnt ||
+            l.screen != l0.screen)
+            return false;
+    }
+    return ((l0.dispcnt >> 16) & 3u) == 2u &&
+           ((l0.dispcnt >> 18) & 3u) == g_hdcap_bank &&
+           (l0.dispcnt & 0x80u) == 0u && nds_vram_lcdc_mapped(g_hdcap_bank);
+}
+
+void hd_capture_reset(const uint16_t* vram, uint32_t scale) {
+    const size_t w = 256u * scale;
+    g_hdcap_shadow.resize(w * 192u * scale);
+    for (uint32_t y = 0; y < 192u * scale; ++y)
+        for (uint32_t x = 0; x < w; ++x)
+            g_hdcap_shadow[y * w + x] = vram[(y / scale) * 256u + x / scale];
+    g_hdcap_scale = scale;
+    g_hdcap_shadow_valid = true;
+}
+
+// VRAM display of the shadow, with each source line's master brightness:
+// what engine A shows in this frame (the bank as the previous frame left it).
+void hd_capture_make_image(uint32_t buffer, const HdCapFrame& f) {
+    const uint32_t s = g_hdcap_scale;
+    const size_t w = 256u * s;
+    std::vector<uint32_t>& image = g_hdcap_image[buffer];
+    image.resize(w * 192u * s);
+    const uint32_t* const lut = rgb32_lut();
+    g_hdcap_pool.run(192u, [&](uint32_t y0, uint32_t y1) {
+        for (uint32_t hy = y0 * s; hy < y1 * s; ++hy) {
+            const uint16_t mbr = f.lines[hy / s].master_bright;
+            const uint32_t mode = mbr >> 14;
+            const uint32_t factor = std::min<uint32_t>(16u, mbr & 0x1Fu);
+            const uint16_t* const src = g_hdcap_shadow.data() + hy * w;
+            uint32_t* const dst = image.data() + hy * w;
+            if ((mode != 1u && mode != 2u) || factor == 0u) {
+                for (size_t x = 0; x < w; ++x) dst[x] = lut[src[x] & 0x7FFFu];
+                continue;
+            }
+            for (size_t x = 0; x < w; ++x) {
+                const uint32_t c =
+                    rgb6(static_cast<uint16_t>(src[x] & 0x7FFFu));
+                dst[x] = to_rgb32(mode == 1u ? brighten(c, factor, 0u)
+                                             : darken(c, factor, 15u));
+            }
+        }
+    });
+    g_hdcap_image_screen[buffer] = f.lines[0].screen;
+    g_hdcap_image_scale[buffer] = s;
+}
+
+// Advance the shadow by one frame: the engine-A composite rebuilt at the 3D
+// raster's resolution (native 2D pair + hi-res 3D sample), then captured
+// against the shadow exactly as the native capture used the bank.
+void hd_capture_advance(const HdCapFrame& f, const uint8_t* hi,
+                        uint32_t hi_width) {
+    const HdCapLine& l0 = f.lines[0];
+    const uint32_t cap = l0.capture;
+    const bool src_a_3d = (cap & 0x01000000u) != 0;
+    const uint32_t s = g_hdcap_scale;
+    const size_t w = 256u * s;
+    Unit blend_regs{};
+    blend_regs.bldcnt = l0.bldcnt;
+    blend_regs.eva = l0.eva;
+    blend_regs.evb = l0.evb;
+    blend_regs.evy = l0.evy;
+    auto ahead = [](const Pixel& a, const Pixel& b) {
+        return a.priority < b.priority ||
+               (a.priority == b.priority && a.order < b.order);
+    };
+    auto unpack = [](uint32_t color, uint32_t meta) {
+        return Pixel{color, static_cast<uint8_t>(meta & 0x3Fu),
+                     static_cast<uint8_t>((meta >> 8) & 0xFFu),
+                     static_cast<uint8_t>((meta >> 16) & 0xFFu),
+                     static_cast<uint8_t>((meta >> 24) & 0xFFu), true, 0};
+    };
+    g_hdcap_pool.run(192u, [&](uint32_t y0, uint32_t y1) {
+    for (uint32_t y = y0; y < y1; ++y) {
+        for (uint32_t x = 0; x < 256u; ++x) {
+            const uint32_t* const p = &f.pairs[(y * 256u + x) * 4u];
+            const Pixel top = unpack(p[0], p[1]);
+            const Pixel below = unpack(p[2], p[3]);
+            const bool effects = (p[1] & 0x80u) != 0u;
+            const bool visible3d = (p[1] & kHdCap3dVisible) != 0u;
+            for (uint32_t sy = 0; sy < s; ++sy) {
+                const uint8_t* const row3d =
+                    hi + ((y * s + sy) * hi_width + x * s) * 4u;
+                uint16_t* const row = g_hdcap_shadow.data() +
+                                      (y * s + sy) * w + x * s;
+                for (uint32_t sx = 0; sx < s; ++sx) {
+                    const uint32_t c3 = nds_gpu3d_hires_word(row3d + sx * 4u);
+                    uint32_t a6 = c3;
+                    if (!src_a_3d) {
+                        Pixel t = top;
+                        Pixel b = below;
+                        const uint8_t a3 =
+                            static_cast<uint8_t>((c3 >> 24) & 0x1Fu);
+                        if (visible3d && a3) {
+                            const Pixel p3{c3 & 0x003F3F3Fu, 0x01u, 0,
+                                           l0.prio3d, 1, true, a3};
+                            if (ahead(p3, t)) { b = t; t = p3; }
+                            else if (ahead(p3, b)) { b = p3; }
+                        }
+                        a6 = compose(blend_regs, t, b, effects);
+                    }
+                    row[sx] = hd_capture_pixel(cap, src_a_3d, a6, row[sx]);
+                }
+            }
+        }
+    }
+    });
+}
+
+// VBlank, after the pool drain: every line of `buffer` has rendered and every
+// staged capture has landed in guest VRAM.
+void hd_capture_end_frame(uint32_t buffer) {
+    const auto start = std::chrono::steady_clock::now();
+    // The previous frame's job owns the shadow, the hi-res copy and its image
+    // until it finishes.
+    g_hdcap_worker.wait();
+    g_hdcap_image_ok[buffer] = false;
+    const HdCapFrame& f = g_hdcap_frames[buffer];
+    const uint32_t scale = nds_gpu3d_internal_scale();
+    auto elapsed = [&] {
+        g_hdcap_stats.update_ns += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - start).count());
+    };
+    if (scale >= 2u && g_hdcap_shadow_valid && g_hdcap_scale == scale &&
+        hd_capture_display_only(f)) {
+        // Nothing captured: the shadow still stands for the bank exactly as
+        // long as nothing else wrote it since the last verified frame.
+        const uint16_t* const vram = reinterpret_cast<const uint16_t*>(
+            nds_vram_bank_data(g_hdcap_bank));
+        if (std::equal(g_hdcap_mirror.begin(), g_hdcap_mirror.end(), vram)) {
+            g_hdcap_image_ok[buffer] = true;
+            ++g_hdcap_stats.display_only;
+            g_hdcap_worker.submit([buffer, &f] {
+                hd_capture_make_image(buffer, f);
+            });
+        } else {
+            ++g_hdcap_stats.model_mismatch;
+            hd_capture_reset(vram, scale);
+            std::copy_n(vram, g_hdcap_mirror.size(), g_hdcap_mirror.data());
+        }
+        elapsed();
+        return;
+    }
+    if (scale < 2u || !hd_capture_frame_eligible(f)) {
+        g_hdcap_shadow_valid = false;
+        return;
+    }
+    ++g_hdcap_stats.frames;
+    const uint32_t cap = f.lines[0].capture;
+    const bool src_a_3d = (cap & 0x01000000u) != 0;
+    g_hdcap_bank = (cap >> 16) & 3u;
+    const uint16_t* const vram = reinterpret_cast<const uint16_t*>(
+        nds_vram_bank_data(g_hdcap_bank));
+    // The native model of this frame's capture must reproduce the bank the
+    // guest holds; otherwise something else wrote it (or the pattern is not
+    // what it looks like) and the shadow no longer stands for it.
+    bool trusted = g_hdcap_shadow_valid && g_hdcap_scale == scale;
+    if (trusted) {
+        for (size_t i = 0; i < g_hdcap_mirror.size(); ++i) {
+            if (hd_capture_pixel(cap, src_a_3d, f.source_a[i],
+                                 g_hdcap_mirror[i]) != vram[i]) {
+                trusted = false;
+                ++g_hdcap_stats.model_mismatch;
+                break;
+            }
+        }
+    }
+    if (trusted) {
+        g_hdcap_image_ok[buffer] = true;
+        ++g_hdcap_stats.presented;
+        uint32_t hi_width = 0;
+        uint32_t hi_height = 0;
+        const auto readback_start = std::chrono::steady_clock::now();
+        const uint8_t* const hi = nds_gpu3d_read_hires(&hi_width, &hi_height);
+        g_hdcap_stats.readback_ns += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - readback_start).count());
+        if (hi && hi_width == 256u * scale && hi_height == 192u * scale) {
+            // The image shows the shadow as the previous frame left it (what
+            // the guest displays this frame); only then does it advance.
+            g_hdcap_worker.submit([buffer, &f, hi, hi_width] {
+                const auto job_start = std::chrono::steady_clock::now();
+                hd_capture_make_image(buffer, f);
+                hd_capture_advance(f, hi, hi_width);
+                g_hdcap_stats.async_ns += static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - job_start).count());
+            });
+        } else {
+            ++g_hdcap_stats.readback_fail;
+            hd_capture_make_image(buffer, f);
+            g_hdcap_shadow_valid = false;
+        }
+    }
+    if (!trusted || !g_hdcap_shadow_valid) hd_capture_reset(vram, scale);
+    std::copy_n(vram, g_hdcap_mirror.size(), g_hdcap_mirror.data());
+    elapsed();
+}
+
 // True when this engine's line render takes the general (melonDS
 // DrawScanline) path rather than one of the dst-direct fast paths. Shared by
 // the render and by the latch, which must decide whether to fetch the 3D line
@@ -1325,9 +1835,17 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
         std::array<uint32_t, 256>& comp6 = sc.comp6;
         const bool need_comp =
             mode == 1u || (cap && !(u.capture & 0x01000000u));
+        const bool hd_record = engine == 0 && job.hdcap_seq != 0u;
         if (need_comp)
             compose_line6(engine, y, u, palette, oam, vram, line3d,
-                          bg0_3d, comp6.data(), sc);
+                          bg0_3d, comp6.data(), sc,
+                          hd_record && cap
+                              ? g_hdcap_frames[job.buffer & 1u].pairs.data() +
+                                    y * 256 * 4
+                              : nullptr);
+        if (hd_record)
+            record_hd_capture_line(job, u, cap,
+                                   need_comp ? comp6.data() : nullptr, line3d);
         const uint32_t mbmode = u.master_bright >> 14;
         const uint32_t mb = std::min<uint32_t>(16, u.master_bright & 0x1Fu);
         auto bright = [&](uint32_t c6) {
@@ -1663,6 +2181,7 @@ void latch_line(int y, LineJob& job) {
 
     job.cap = false;
     job.capw = 0;
+    job.hdcap_seq = g_hdcap_enabled ? g_hdcap_seq : 0u;
     if (job.unit[0].capture_latch) {
         static constexpr uint16_t kCapW[4] = {128, 256, 256, 256};
         static constexpr uint8_t kCapH[4] = {128, 64, 128, 192};
@@ -2052,6 +2571,9 @@ void nds_gpu2d_reset(){
     drain_pool(NDS_GPU2D_FENCE_FRAME);
     g_unit={};
     g_front = 0;
+    g_hdcap_worker.wait();
+    g_hdcap_shadow_valid = false;
+    g_hdcap_image_ok = {};
     g_direct_frame_active = false;
     g_direct_present_frame_active = false;
     g_frame_capture_active = false;
@@ -2322,6 +2844,7 @@ void prepare_direct_frame() {
 
 void nds_gpu2d_start_frame(){
     drain_pool(NDS_GPU2D_FENCE_FRAME);
+    ++g_hdcap_seq;
     // The frontend presents g_front after this boundary, while rasterization
     // has already advanced to the next back buffer. Preserve the completed
     // frame's host-only presentation decision and descriptor before updating
@@ -2372,6 +2895,10 @@ void nds_gpu2d_finish_frame(){
 }
 void nds_gpu2d_vblank(){
     drain_pool(NDS_GPU2D_FENCE_FRAME);
+    // Lines rendered into the back buffer; finish_frame publishes it at the
+    // next frame boundary, after VCount 215 has started the next 3D frame,
+    // so the hi-res 3D this frame consumed is only still in hand here.
+    if (g_hdcap_enabled) hd_capture_end_frame(static_cast<uint32_t>(g_front ^ 1));
     // melonDS Unit::VBlank: the capture enable bit auto-clears at line 192
     // only if it latched at line 0 this frame.
     for (auto& u : g_unit) {
@@ -3021,6 +3548,32 @@ const uint32_t* nds_gpu2d_adaptive_framebuffer(int screen, uint16_t* width) {
 
 void nds_gpu2d_invalidate_hd_frame() {
     g_hd_frame_valid = false;
+}
+
+void nds_gpu2d_set_hd_capture(bool enabled) {
+    g_hdcap_worker.wait();
+    g_hdcap_enabled = enabled;
+    nds_gpu3d_set_hires_readback(enabled);
+    g_hdcap_shadow_valid = false;
+    g_hdcap_image_ok = {};
+}
+
+bool nds_gpu2d_hd_capture_image(int screen, const uint32_t** pixels,
+                                uint16_t* width, uint16_t* height) {
+    const uint32_t buffer = static_cast<uint32_t>(g_front);
+    if (!g_hdcap_enabled || !g_hdcap_image_ok[buffer]) return false;
+    g_hdcap_worker.wait();   // the image is built off-thread after VBlank
+    if (g_hdcap_image_screen[buffer] != (screen & 1)) return false;
+    if (pixels) *pixels = g_hdcap_image[buffer].data();
+    if (width) *width = static_cast<uint16_t>(256u * g_hdcap_image_scale[buffer]);
+    if (height) *height = static_cast<uint16_t>(192u * g_hdcap_image_scale[buffer]);
+    ++g_hdcap_stats.taken;
+    return true;
+}
+
+void nds_gpu2d_hd_capture_stats(NdsGpu2dHdCaptureStats* out) {
+    g_hdcap_worker.wait();
+    if (out) *out = g_hdcap_stats;
 }
 
 void nds_gpu2d_set_hd_emit(bool enabled) {

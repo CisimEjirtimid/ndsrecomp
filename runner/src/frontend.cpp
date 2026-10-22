@@ -1390,6 +1390,13 @@ struct FrontendPresentation {
     // Book layout: the runtime menu is drawn upright over both turned
     // screens from this window-sized overlay instead of inside the top screen.
     SDL_Texture* book_menu = nullptr;
+    // HD display capture images (nds_gpu2d_hd_capture_image), and the texture
+    // each screen draws from this frame: its native texture or its HD one.
+    SDL_Texture* hd_textures[2]{};
+    int hd_sizes[2][2]{};
+    SDL_Texture* screen_source[2]{};
+    // Logical canvas of each window's renderer (see apply_logical_transform).
+    int logical_sizes[2][2]{};
     uint32_t window_ids[2]{};
     int screen_widths[2]{kScreenWidth, kScreenWidth};
     int canvas_width = kScreenWidth;
@@ -1450,6 +1457,12 @@ uint32_t fullscreen_flags(NdsFullscreenMode mode) {
 void destroy_presentation(FrontendPresentation& presentation) {
     if (presentation.book_menu) SDL_DestroyTexture(presentation.book_menu);
     presentation.book_menu = nullptr;
+    for (int screen = 0; screen < 2; ++screen) {
+        if (presentation.hd_textures[screen])
+            SDL_DestroyTexture(presentation.hd_textures[screen]);
+        presentation.hd_textures[screen] = nullptr;
+        presentation.screen_source[screen] = nullptr;
+    }
     for (SDL_Texture*& texture : presentation.sample_targets) {
         if (texture) SDL_DestroyTexture(texture);
         texture = nullptr;
@@ -1542,10 +1555,59 @@ bool set_window_fullscreen(SDL_Window* window, NdsFullscreenMode mode) {
 #endif
 }
 
+// Integer-scaled, centred logical canvas. SDL3's logical presentation
+// composites through a logical-size intermediate, which squashes any texture
+// denser than the canvas (an HD capture image) back to native, so on SDL3 the
+// same mapping is applied as render scale + viewport, which transform draw
+// calls instead. Re-applied every frame so window resizes take effect.
+bool apply_logical_transform(SDL_Renderer* renderer, int width, int height) {
+#if defined(NDS_HAVE_SDL3)
+    if (!renderer || width <= 0 || height <= 0) return false;
+    int output_w = 0;
+    int output_h = 0;
+    if (!SDL_GetCurrentRenderOutputSize(renderer, &output_w, &output_h))
+        return false;
+    float scale = static_cast<float>(
+        std::min(output_w / width, output_h / height));
+    if (scale < 1.0f)   // window smaller than the canvas: shrink to fit
+        scale = std::min(static_cast<float>(output_w) / width,
+                         static_cast<float>(output_h) / height);
+    if (scale <= 0.0f) return false;
+    static int logged_w = -1;
+    static int logged_h = -1;
+    if (output_w != logged_w || output_h != logged_h) {
+        logged_w = output_w;
+        logged_h = output_h;
+        int window_w = 0;
+        int window_h = 0;
+        SDL_GetWindowSize(SDL_GetRenderWindow(renderer), &window_w, &window_h);
+        std::fprintf(stderr,
+            "[sdl] render output %dx%d (window %dx%d, display scale %.2f), "
+            "canvas %dx%d at %.2fx\n",
+            output_w, output_h, window_w, window_h,
+            SDL_GetWindowDisplayScale(SDL_GetRenderWindow(renderer)),
+            width, height, static_cast<double>(scale));
+    }
+    // The viewport is in scaled (logical) units.
+    const SDL_Rect viewport{
+        static_cast<int>((output_w / scale - width) / 2.0f),
+        static_cast<int>((output_h / scale - height) / 2.0f),
+        width, height};
+    return SDL_SetRenderScale(renderer, scale, scale) &&
+           SDL_SetRenderViewport(renderer, &viewport);
+#else
+    (void)renderer;
+    (void)width;
+    (void)height;
+    return true;
+#endif
+}
+
 bool set_render_logical_size(SDL_Renderer* renderer, int width, int height) {
 #if defined(NDS_HAVE_SDL3)
     return SDL_SetRenderLogicalPresentation(
-        renderer, width, height, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+               renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED) &&
+           apply_logical_transform(renderer, width, height);
 #else
     return SDL_RenderSetLogicalSize(renderer, width, height) == 0;
 #endif
@@ -1619,6 +1681,16 @@ bool set_texture_scale_nearest(SDL_Texture* texture) {
     return SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
 #else
     return SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest) == 0;
+#endif
+}
+
+// An HD image is usually drawn smaller than its own size (a 4x raster in a
+// 2x-3x window), where nearest sampling would drop rows and columns.
+bool set_texture_scale_linear(SDL_Texture* texture) {
+#if defined(NDS_HAVE_SDL3)
+    return SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+#else
+    return SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear) == 0;
 #endif
 }
 
@@ -1890,13 +1962,15 @@ bool create_presentation(const NdsFrontendOptions& options,
             : !presentation.separate && screen == 0
                 ? kScreenHeight * 2 : kScreenHeight;
         if (screen == 0 || presentation.separate) {
-            set_render_logical_size(
-                presentation.renderers[screen],
+            presentation.logical_sizes[screen][0] =
                 presentation.book ? 2 * kBookAreaWidth
                 : presentation.separate
                     ? presentation.screen_widths[screen]
-                    : presentation.canvas_width,
-                logical_height);
+                    : presentation.canvas_width;
+            presentation.logical_sizes[screen][1] = logical_height;
+            set_render_logical_size(presentation.renderers[screen],
+                                    presentation.logical_sizes[screen][0],
+                                    presentation.logical_sizes[screen][1]);
 #if !defined(NDS_HAVE_SDL3)
             SDL_RenderSetIntegerScale(presentation.renderers[screen],
                                       SDL_TRUE);
@@ -1951,8 +2025,12 @@ bool create_presentation(const NdsFrontendOptions& options,
 void render_screen(FrontendPresentation& presentation, int screen,
                    const SDL_Rect& destination, double degrees = 0.0) {
     SDL_Renderer* renderer = presentation.renderers[screen];
-    SDL_Texture* source = presentation.textures[screen];
-    if (presentation.sample_scale > 1 && presentation.sample_targets[screen]) {
+    SDL_Texture* source = presentation.screen_source[screen]
+        ? presentation.screen_source[screen] : presentation.textures[screen];
+    // An HD image already carries more than native density; the supersample
+    // target exists to reconstruct a native one.
+    if (source == presentation.textures[screen] &&
+        presentation.sample_scale > 1 && presentation.sample_targets[screen]) {
         SDL_SetRenderTarget(renderer, presentation.sample_targets[screen]);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
@@ -2113,6 +2191,8 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
             0, 0, presentation.screen_widths[1], kScreenHeight};
         SDL_Renderer* renderer = presentation.renderers[1];
         start = SDL_GetPerformanceCounter();
+        apply_logical_transform(renderer, presentation.logical_sizes[1][0],
+                                presentation.logical_sizes[1][1]);
         SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
         SDL_RenderClear(renderer);
         render_screen(presentation, 1, screen_rect);
@@ -2127,6 +2207,8 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
 #endif
         return ticks;
     }
+    const bool menu_in_top = !presentation.book && runtime_ui &&
+                             recomp_runtime_ui_is_open(runtime_ui);
     if (!presentation.book)
         top_pixels = runtime_menu_overlay(
             runtime_ui, top_pixels, top_width, kScreenHeight);
@@ -2135,10 +2217,46 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
                       top_width * sizeof(uint32_t));
     SDL_UpdateTexture(presentation.textures[1], nullptr, bottom_pixels,
                       bottom_width * sizeof(uint32_t));
+    // HD display capture: a screen with an HD image for this frame draws it
+    // in place of its native texture, in every layout. Not while the menu is
+    // composited into the native top screen, nor on a widened screen.
+    for (int screen = 0; screen < 2; ++screen) {
+        presentation.screen_source[screen] = presentation.textures[screen];
+        const uint32_t* hd = nullptr;
+        uint16_t hd_width = 0;
+        uint16_t hd_height = 0;
+        if ((screen == 0 && menu_in_top) ||
+            presentation.screen_widths[screen] != kScreenWidth ||
+            !nds_gpu2d_hd_capture_image(screen, &hd, &hd_width, &hd_height))
+            continue;
+        SDL_Texture*& texture = presentation.hd_textures[screen];
+        if (texture && (presentation.hd_sizes[screen][0] != hd_width ||
+                        presentation.hd_sizes[screen][1] != hd_height)) {
+            SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+        if (!texture) {
+            texture = SDL_CreateTexture(
+                presentation.renderers[screen], SDL_PIXELFORMAT_ARGB8888,
+                SDL_TEXTUREACCESS_STREAMING, hd_width, hd_height);
+            if (!texture) {
+                std::fprintf(stderr, "[sdl] HD texture %ux%u failed: %s\n",
+                             hd_width, hd_height, SDL_GetError());
+                continue;
+            }
+            set_texture_scale_linear(texture);
+            presentation.hd_sizes[screen][0] = hd_width;
+            presentation.hd_sizes[screen][1] = hd_height;
+        }
+        SDL_UpdateTexture(texture, nullptr, hd, hd_width * sizeof(uint32_t));
+        presentation.screen_source[screen] = texture;
+    }
     ticks.upload += SDL_GetPerformanceCounter() - start;
     if (!presentation.separate) {
         SDL_Renderer* renderer = presentation.renderers[0];
         start = SDL_GetPerformanceCounter();
+        apply_logical_transform(renderer, presentation.logical_sizes[0][0],
+                                presentation.logical_sizes[0][1]);
         SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
         SDL_RenderClear(renderer);
         if (presentation.book) {
@@ -2185,6 +2303,9 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
             0, 0, presentation.screen_widths[screen], kScreenHeight};
         SDL_Renderer* renderer = presentation.renderers[screen];
         start = SDL_GetPerformanceCounter();
+        apply_logical_transform(renderer,
+                                presentation.logical_sizes[screen][0],
+                                presentation.logical_sizes[screen][1]);
         SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
         SDL_RenderClear(renderer);
         render_screen(presentation, screen, screen_rect);
@@ -2316,9 +2437,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     }
     if (options.internal_resolution > 1 && !presentation.gl_top) {
         std::fprintf(stderr,
-            "[sdl] internal resolution %ux renders but is not presented: "
-            "the extra sample density needs the direct OpenGL top-screen "
-            "presenter\n",
+            "[sdl] internal resolution %ux is presented for display-capture "
+            "scenes only (HD capture); direct 3D needs the separate-window "
+            "OpenGL top-screen presenter\n",
             static_cast<unsigned>(options.internal_resolution));
     }
     // The adaptive compositor only pays for the extra per-pixel stores when
@@ -2350,6 +2471,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     }
     nds_gpu2d_set_direct_present(
         nds_compute_host_has_visible_context());
+    // Only where a hi-res 3D surface exists to rebuild captures from.
+    nds_gpu2d_set_hd_capture(nds_gpu3d_compute_output_texture_hires() != 0u);
 #else
     if (nds_gpu3d_renderer_policy() == NdsGpu3dRendererPolicy::Auto) {
         std::fprintf(stderr,
@@ -4366,8 +4489,30 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // report failure on every clean run.
     const bool audio_opened = static_cast<bool>(audio);
     close_audio(audio);
+    NdsGpu2dHdCaptureStats hd_capture{};
+    nds_gpu2d_hd_capture_stats(&hd_capture);
+    if (hd_capture.frames) {
+        std::fprintf(stderr,
+            "[gpu2d] HD capture: %llu frames matched, %llu presented HD, "
+            "%llu shown while not capturing (%llu drawn), "
+            "%llu native-model resets, %llu readback failures, "
+            "%.2f ms/frame on the emulation thread (readback %.2f), "
+            "%.2f ms/frame off-thread\n",
+            static_cast<unsigned long long>(hd_capture.frames),
+            static_cast<unsigned long long>(hd_capture.presented),
+            static_cast<unsigned long long>(hd_capture.display_only),
+            static_cast<unsigned long long>(hd_capture.taken),
+            static_cast<unsigned long long>(hd_capture.model_mismatch),
+            static_cast<unsigned long long>(hd_capture.readback_fail),
+            hd_capture.update_ns / 1e6 / static_cast<double>(hd_capture.frames),
+            hd_capture.readback_ns / 1e6 /
+                static_cast<double>(hd_capture.frames),
+            hd_capture.async_ns / 1e6 /
+                static_cast<double>(hd_capture.frames));
+    }
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     nds_gpu2d_set_direct_present(false);
+    nds_gpu2d_set_hd_capture(false);
     nds_compute_host_stop();
 #endif
     if (controller) SDL_GameControllerClose(controller);
