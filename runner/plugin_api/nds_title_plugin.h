@@ -2,11 +2,12 @@
  * runner (CMake NDS_TITLE_PLUGIN_DIR), for opt-in presentation and input
  * layers ("remaster" features) on top of the exact machine.
  *
- * A plugin observes the guest; it never writes guest memory. Its only effect
- * on the emulated DS is the input it hands back from `input`, which is the
- * same kind of state a player produces (buttons and the stylus). With the
- * plugin disabled (--title-plugin off) the runner behaves as if none were
- * built in, so oracle comparisons stay exact.
+ * A plugin observes the guest and hands back the input for each frame, the
+ * same kind of state a player produces (buttons and the stylus). Where input
+ * cannot express a feature, it may write guest main RAM through
+ * `host->write` (a "hook"); keep those few, documented, and limited to the
+ * scenes that need them. With the plugin disabled (--title-plugin off) the
+ * runner behaves as if none were built in, so oracle comparisons stay exact.
  *
  * Plain C so a title repository depends on this one header only.
  */
@@ -49,6 +50,9 @@ typedef struct NdsTitleHost {
     uint64_t (*frame)(void);
     /* One line to the runner's log, prefixed with the plugin name. */
     void (*log)(const char* message);
+    /* Write guest main RAM (0x02000000-0x023FFFFF) as the ARM9 would, at the
+     * point of the call (frame start). Returns `len`, or 0 when refused. */
+    uint32_t (*write)(uint32_t addr, const void* src, uint32_t len);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices
