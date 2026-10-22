@@ -31,6 +31,7 @@
 #include "savestate_slots.h"
 #include "spu.h"
 #include "title_patches.h"
+#include "title_plugin.h"
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 #include "melonds_compute/ComputeHost.h"
 #endif
@@ -2666,12 +2667,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         uint16_t pressed = static_cast<uint16_t>(
             keyboard_pressed | controller_pressed | mouse_pressed |
             mph_prime_pressed | stick_pressed);
+        const uint16_t screen_dpad = pressed;
         // In a book layout the D-pad turns with the console: every source
         // (keys, pad D-pad, stick) means a direction on the turned screen.
         if (presentation.book)
             pressed = nds_book_turn_dpad(presentation.book_left_handed,
                                          pressed);
         nds_set_key_mask(static_cast<uint16_t>(0x0FFFu & ~pressed));
+        nds_set_screen_dpad(screen_dpad);
     };
     publish_keys();
     nds_set_touch(0, 0, false);

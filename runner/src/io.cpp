@@ -20,6 +20,7 @@
 #include "gpu3d.h"
 #include "spu.h"
 #include "title_patches.h"
+#include "title_plugin.h"
 #include "vram.h"
 #include "emu_profile.h"
 
@@ -2047,6 +2048,13 @@ bool nds_io_cartridge_save_snapshot(const uint8_t** data, uint32_t* size,
 }
 
 void nds_set_touch(uint16_t x, uint16_t y, bool down) {
+    if (nds_title_plugin_active())
+        nds_title_plugin_latch_touch(x, y, down);
+    else
+        nds_apply_guest_touch(x, y, down);
+}
+
+void nds_apply_guest_touch(uint16_t x, uint16_t y, bool down) {
     if (!down) {
         g_tsc_x = 0x000u;
         g_tsc_y = 0x0FFFu;
@@ -2061,6 +2069,13 @@ void nds_set_touch(uint16_t x, uint16_t y, bool down) {
 }
 
 void nds_set_key_mask(uint32_t mask) {
+    if (nds_title_plugin_active())
+        nds_title_plugin_latch_keys(static_cast<uint16_t>(~mask & 0x0FFFu));
+    else
+        nds_apply_guest_keys(mask);
+}
+
+void nds_apply_guest_keys(uint32_t mask) {
     const uint32_t key_lo = mask & 0x03FFu;
     const uint32_t key_hi = (mask >> 10) & 0x3u;
     const uint32_t oldkey = g_keyinput;
@@ -3096,6 +3111,7 @@ void nds_tick_display(unsigned long long cyc) {
             // melonDS GPU::StartFrame: an aborted 3D frame restarts its
             // renderer before scanline 0 of the new frame.
             nds_title_patches_start_frame();
+            nds_title_plugin_start_frame();
             nds_gpu2d_start_frame();
             nds_gpu3d_start_frame();
             g_vcount = 0;

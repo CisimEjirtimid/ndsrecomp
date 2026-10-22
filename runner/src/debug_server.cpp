@@ -44,6 +44,7 @@
 #include "spu.h"
 #include "tier3.h"
 #include "title_patches.h"
+#include "title_plugin.h"
 
 extern "C" uint32_t g_runtime_break_pc;
 
@@ -1172,6 +1173,10 @@ std::string handle(const std::string& line) {
         out += "]}";
         return out;
     }
+    if (cmd == "title_plugin") {
+        return "{\"status\":\"" + json_escape(nds_title_plugin_status()) + "\"}";
+    }
+
     if (cmd == "title_patches") {
         const NdsTitlePatchDebugState s = nds_title_patches_debug_state();
         return "{\"mph_adventure_wide_enabled\":" +
