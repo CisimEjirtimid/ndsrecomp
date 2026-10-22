@@ -4,6 +4,7 @@
 
 #include "state.h"
 #include "io.h"
+#include "runtime_arm.h"
 #include "nds_title_plugin.h"
 
 #ifndef NDS_HAVE_TITLE_PLUGIN
@@ -14,11 +15,24 @@ namespace {
 
 const NdsTitlePlugin* g_plugin = nullptr;
 uint64_t g_frame = 0;
+uint64_t g_writes = 0;
 NdsTitleInput g_host{};
 
 uint32_t host_read(uint32_t addr, void* dst, uint32_t len) {
     auto* out = static_cast<uint8_t*>(dst);
     for (uint32_t i = 0; i < len; ++i) out[i] = bus_debug_read8(9, addr + i);
+    return len;
+}
+
+uint32_t host_write(uint32_t addr, const void* src, uint32_t len) {
+    if (addr < 0x02000000u || addr >= 0x02400000u || len > 0x02400000u - addr)
+        return 0;
+    const auto* in = static_cast<const uint8_t*>(src);
+    const NdsCpu old = g_nds_active;
+    g_nds_active = NDS_ARM9;
+    for (uint32_t i = 0; i < len; ++i) bus_write_u8_slow(addr + i, in[i]);
+    g_nds_active = old;
+    ++g_writes;
     return len;
 }
 
@@ -30,7 +44,7 @@ void host_log(const char* message) {
 }
 
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
-                            host_log};
+                            host_log, host_write};
 
 }  // namespace
 
@@ -98,5 +112,6 @@ std::string nds_title_plugin_status() {
         out += ": ";
         out += buf;
     }
+    if (g_writes) out += " [" + std::to_string(g_writes) + " guest writes]";
     return out;
 }
