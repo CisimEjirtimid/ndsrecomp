@@ -82,6 +82,11 @@ set(NDS_TITLE_BANK_DIR "" CACHE PATH
     "Optional ignored directory containing generated title banks")
 set(NDS_TITLE_ROM_SHA1 "" CACHE STRING
     "Exact lowercase ROM SHA-1 allowed to register NDS_TITLE_BANK_DIR")
+# Title plugin (plugin_api/nds_title_plugin.h): a directory whose
+# CMakeLists.txt defines a static library target `nds_title_plugin`, linked
+# into the runner. Link `nds_title_plugin_api` from it for the header.
+set(NDS_TITLE_PLUGIN_DIR "" CACHE PATH
+    "Optional title repository directory with an nds_title_plugin library")
 # Multi-title form: parallel lists, one bank directory per exact ROM SHA-1.
 # One runner binary can then serve several cartridges (e.g. a two-in-one
 # repository like Pokemon Black/White), registering only the bank group whose
@@ -441,6 +446,7 @@ add_executable(nds_runner
     src/gpu2d.cpp
     src/gpu3d.cpp
     src/title_patches.cpp
+    src/title_plugin.cpp
     src/tier3.cpp
     src/coverage_manifest.cpp
     src/diagnostics.cpp
@@ -715,6 +721,20 @@ if(NDS_ENABLE_COMPUTE_RENDERER)
     endif()
 endif()
 target_link_libraries(nds_runner PRIVATE nds_banks nds_support nds_armv4t slirp)
+add_library(nds_title_plugin_api INTERFACE)
+target_include_directories(nds_title_plugin_api INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/plugin_api)
+target_link_libraries(nds_runner PRIVATE nds_title_plugin_api)
+if(NDS_TITLE_PLUGIN_DIR)
+    add_subdirectory("${NDS_TITLE_PLUGIN_DIR}"
+        "${CMAKE_CURRENT_BINARY_DIR}/title_plugin")
+    if(NOT TARGET nds_title_plugin)
+        message(FATAL_ERROR
+            "NDS_TITLE_PLUGIN_DIR must define a target named nds_title_plugin")
+    endif()
+    target_link_libraries(nds_runner PRIVATE nds_title_plugin)
+    target_compile_definitions(nds_runner PRIVATE NDS_HAVE_TITLE_PLUGIN=1)
+endif()
 if(NDS_BOOTSTRAP_FIRMWARE)
     target_compile_definitions(nds_runner PRIVATE NDS_BOOTSTRAP_FIRMWARE=1)
 elseif(EXISTS "${GEN}/fw_arm9_calibration_save_dispatch.c")

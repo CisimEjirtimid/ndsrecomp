@@ -23,6 +23,9 @@ void     nds_io_debug_history_reset();
 extern bool g_nds_rtc_host;
 void     nds_set_touch(uint16_t x, uint16_t y, bool down);
 void     nds_set_key_mask(uint32_t mask);
+// Straight to the guest, bypassing an active title plugin's input latch.
+void     nds_apply_guest_touch(uint16_t x, uint16_t y, bool down);
+void     nds_apply_guest_keys(uint32_t mask);
 // Debug-server throttle override (`turbo` command): frontend treats it like
 // an explicit developer speed-control request. Written from the debug-server
 // thread.

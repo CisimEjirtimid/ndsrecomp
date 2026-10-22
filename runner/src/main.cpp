@@ -59,6 +59,7 @@
 #include "title_banks.h"
 #include "coverage_manifest.h"
 #include "title_patches.h"
+#include "title_plugin.h"
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 #include "melonds_compute/ComputeHost.h"
 #endif
@@ -393,6 +394,7 @@ int main(int argc, char** argv) {
     std::string rom_path;
     std::string config_path = "game.toml";
     std::string cli_screen_layout;
+    std::string cli_title_plugin;
     std::string cli_fullscreen;
     std::string cli_adaptive_screens;
     std::string cli_widescreen_width;
@@ -528,6 +530,8 @@ int main(int argc, char** argv) {
             config_explicit = true;
         } else if (a == "--screen-layout" && i + 1 < argc) {
             cli_screen_layout = argv[++i];
+        } else if (a == "--title-plugin" && i + 1 < argc) {
+            cli_title_plugin = argv[++i];
         } else if (a == "--fullscreen" && i + 1 < argc) {
             cli_fullscreen = argv[++i];
         } else if (a == "--adaptive-widescreen" && i + 1 < argc) {
@@ -683,6 +687,7 @@ int main(int argc, char** argv) {
                 "[--firmware-state-path mutable-firmware.bin] "
                 "[--config game.toml] "
                 "[--screen-layout stacked|separate|book|book-left] "
+                "[--title-plugin on|off] "
                 "[--fullscreen off|borderless|exclusive] "
                 "[--adaptive-widescreen none|top|bottom|both] "
                 "[--widescreen-width even:256..448] "
@@ -1737,6 +1742,20 @@ int main(int argc, char** argv) {
     nds_diagnostics_set_identity(rom_sha1.c_str(), rom_name.c_str(),
                                  NDS_RUNNER_BUILD_ID);
     debug_set_savestate_identity(NDS_RUNNER_BUILD_ID, rom_sha1);
+    {
+        // The built-in title plugin (opt-in presentation/input layer) is on
+        // by default for its own cartridge; --title-plugin off (or
+        // NDS_TITLE_PLUGIN=off) gives the plain machine for oracle work.
+        std::string choice = cli_title_plugin;
+        if (choice.empty())
+            if (const char* env = std::getenv("NDS_TITLE_PLUGIN")) choice = env;
+        if (!choice.empty() && choice != "on" && choice != "off") {
+            std::fprintf(stderr, "invalid --title-plugin %s (on|off)\n",
+                         choice.c_str());
+            return 2;
+        }
+        nds_title_plugin_init(rom_sha1, choice != "off");
+    }
 #if defined(NDS_MPH_MATH_HLE)
     if (mph_hle::initialize(rom_sha1.c_str())) {
         std::fprintf(stderr, "[hle] MPH native vector math selected at build time\n");
