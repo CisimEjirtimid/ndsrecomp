@@ -1173,6 +1173,40 @@ std::string handle(const std::string& line) {
         out += "]}";
         return out;
     }
+    if (cmd == "layer_capture") {
+        nds_gpu2d_set_layer_capture(json_u64(line, "on", 1) != 0);
+        return std::string("{\"on\":") +
+               (nds_gpu2d_layer_capture() ? "true" : "false") + "}";
+    }
+
+    if (cmd == "layers") {
+        // {"cmd":"layers"} -> metadata; {"cmd":"layers","engine":0,
+        // "layer":0..5} -> that layer's pixels; "layer":6 -> window bytes.
+        NdsGpu2dLayers l{};
+        if (!nds_gpu2d_layers(&l))
+            return "{\"error\":\"no layer frame (send layer_capture first)\"}";
+        const uint64_t engine = json_u64(line, "engine", 99);
+        const uint64_t layer = json_u64(line, "layer", 99);
+        if (engine > 1 || layer > NDS_GPU2D_LAYER_COUNT) {
+            char b[256];
+            std::snprintf(b, sizeof(b),
+                "{\"frame\":%llu,\"top_engine\":%u,\"dispcnt\":[%u,%u],"
+                "\"bgcnt\":[[%u,%u,%u,%u],[%u,%u,%u,%u]]}",
+                static_cast<unsigned long long>(l.frame), l.top_engine,
+                l.dispcnt[0], l.dispcnt[1], l.bgcnt[0][0], l.bgcnt[0][1],
+                l.bgcnt[0][2], l.bgcnt[0][3], l.bgcnt[1][0], l.bgcnt[1][1],
+                l.bgcnt[1][2], l.bgcnt[1][3]);
+            return b;
+        }
+        std::string hex;
+        if (layer == NDS_GPU2D_LAYER_COUNT)
+            append_hex(hex, l.window[engine], 256u * 192u);
+        else
+            append_hex(hex, reinterpret_cast<const uint8_t*>(l.pixels[engine][layer]),
+                       256u * 192u * 4u);
+        return "{\"hex\":\"" + hex + "\"}";
+    }
+
     if (cmd == "title_plugin") {
         return "{\"status\":\"" + json_escape(nds_title_plugin_status()) + "\"}";
     }

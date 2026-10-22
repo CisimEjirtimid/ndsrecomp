@@ -40,6 +40,29 @@ enum {
     NDS_KEY_DPAD = NDS_KEY_RIGHT | NDS_KEY_LEFT | NDS_KEY_UP | NDS_KEY_DOWN
 };
 
+/* One frame's 2D layers per engine (A = 0, B = 1), see host->layers. */
+enum {
+    NDS_LAYER_BG0 = 0,
+    NDS_LAYER_BG1,
+    NDS_LAYER_BG2,
+    NDS_LAYER_BG3,
+    NDS_LAYER_OBJ, /* alpha 0xFF opaque, 0x80 semi-transparent */
+    NDS_LAYER_3D,  /* engine A only; alpha = the 3D pixel's alpha */
+    NDS_LAYER_COUNT
+};
+typedef struct NdsTitleLayers {
+    uint64_t frame;
+    /* 256 x 192 pixels each, 0xAARRGGBB, alpha 0 where transparent. */
+    const uint32_t* pixels[2][NDS_LAYER_COUNT];
+    /* Per pixel: the DS window mask (bits 0-3 BG0-3, 4 OBJ, 5 effects) and,
+     * in bits 6-7, the OBJ pixel's priority. */
+    const uint8_t* window[2];
+    const uint32_t* backdrop[2]; /* per line, 0xFFRRGGBB */
+    uint32_t dispcnt[2];
+    uint16_t bgcnt[2][4];        /* bits 0-1: the BG's priority */
+    uint8_t top_engine;          /* engine shown on the top screen */
+} NdsTitleLayers;
+
 typedef struct NdsTitleHost {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
     /* Side-effect-free read of the ARM9 view of the guest bus (main RAM,
@@ -53,6 +76,11 @@ typedef struct NdsTitleHost {
     /* Write guest main RAM (0x02000000-0x023FFFFF) as the ARM9 would, at the
      * point of the call (VBlank start). Returns `len`, or 0 when refused. */
     uint32_t (*write)(uint32_t addr, const void* src, uint32_t len);
+    /* Per-layer capture. While enabled (a cost: every line takes the full
+     * compositing path), `layers` returns the frame that has just finished,
+     * valid until the next VBlank. Returns 0 when nothing is available. */
+    void (*capture_layers)(int enable);
+    int (*layers)(NdsTitleLayers* out);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices

@@ -186,6 +186,36 @@ struct NdsGpu2dHdCaptureStats {
     uint64_t async_ns;        // image + shadow advance, off-thread
 };
 void nds_gpu2d_hd_capture_stats(NdsGpu2dHdCaptureStats* out);
+// Per-layer capture (host-only): each engine's layers recorded separately
+// for a whole frame, for title presentation layers. While enabled every line
+// takes the general compositing path. Pixels are 0xAARRGGBB with 8-bit
+// channels; A = 0 where the layer is transparent. Layers are indexed by
+// engine (A = 0, B = 1), not by physical screen; `top_engine` says which
+// engine the top screen showed.
+enum NdsGpu2dLayer : uint8_t {
+    NDS_GPU2D_LAYER_BG0 = 0,
+    NDS_GPU2D_LAYER_BG1,
+    NDS_GPU2D_LAYER_BG2,
+    NDS_GPU2D_LAYER_BG3,
+    NDS_GPU2D_LAYER_OBJ,  // A = 0xFF opaque, 0x80 semi-transparent
+    NDS_GPU2D_LAYER_3D,   // engine A only; A = the 3D pixel's alpha
+    NDS_GPU2D_LAYER_COUNT,
+};
+struct NdsGpu2dLayers {
+    uint64_t frame;  // VBlanks since reset when this frame completed
+    const uint32_t* pixels[2][NDS_GPU2D_LAYER_COUNT];  // 256 x 192 each
+    // Per pixel: the DS window mask (bits 0-3 BG0-3, 4 OBJ, 5 effects) and,
+    // in bits 6-7, the OBJ pixel's priority.
+    const uint8_t* window[2];
+    const uint32_t* backdrop[2];  // per line, 0xFFRRGGBB
+    uint32_t dispcnt[2];          // as latched on the last line
+    uint16_t bgcnt[2][4];
+    uint8_t top_engine;
+};
+void nds_gpu2d_set_layer_capture(bool enabled);
+bool nds_gpu2d_layer_capture();
+// The last completed frame's layers; false until one was recorded.
+bool nds_gpu2d_layers(NdsGpu2dLayers* out);
 
 void nds_gpu2d_set_direct_present(bool enabled);
 bool nds_gpu2d_direct_frame_active();
