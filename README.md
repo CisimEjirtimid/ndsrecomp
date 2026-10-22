@@ -273,6 +273,19 @@ overrides are
 `--screen-layout` / `--adaptive-widescreen` CLI flags. Precedence is TOML,
 then environment, then CLI.
 
+`internal_resolution` (2-4, OpenGL compute renderer) also reaches titles that
+show their 3D through display capture: the engine-A composite captured into
+a VRAM bank (often blended with that bank for motion blur) and displayed in
+VRAM mode, as Hotel Dusk does. The runner keeps a host-only shadow of the
+capture bank at the 3D raster's resolution, advanced each frame with the
+capture arithmetic from the recorded 2D layers and the hi-res 3D, and shows
+it in every screen layout. Each frame first checks that the same model at
+native resolution reproduces the bank the guest actually holds; any mismatch
+or unsupported setup resets the shadow and that frame shows the native
+image. Guest state is never touched, so accuracy comparisons are unaffected.
+`texture_upscale` pairs well with it: the extra raster density sharpens
+polygon edges, the upscaled textures smooth the surfaces.
+
 `startup_mode = "automatic"` sets the retail firmware's Automatic-mode flag
 in the runner's private in-memory firmware image. With a Slot-1 cartridge
 inserted, the real BIOS/firmware/card path then launches it without navigating

@@ -158,6 +158,35 @@ bool nds_gpu2d_hd_frame_peek(NdsGpu2dHdFrame* out);
 // 3D against a stale 2D stack and stale blend registers.
 void nds_gpu2d_invalidate_hd_frame();
 
+// HD display capture. Titles that show 3D through DISPCAPCNT -- capture the
+// engine-A composite (optionally blended with the displayed VRAM bank, the
+// classic motion-blur feedback) and display that bank in VRAM mode -- never
+// present the 3D layer directly, so the HD paths above cannot reach them. With
+// this enabled (internal resolution > 1 on the accelerated renderer), engine A
+// records each captured line's 2D stack with the 3D layer removed; at VBlank
+// a host-only shadow of the capture bank is advanced at the 3D raster's
+// resolution with the same capture arithmetic, after checking that the
+// identical native model reproduces the bank the guest actually holds. Guest
+// state is never touched; any mismatch or unsupported setup resets the shadow
+// from native VRAM and that frame presents natively.
+void nds_gpu2d_set_hd_capture(bool enabled);
+// The HD image for `screen` of the frame nds_gpu2d_framebuffer() exposes
+// (0xFFRRGGBB, width x height), or false to present the native framebuffer.
+bool nds_gpu2d_hd_capture_image(int screen, const uint32_t** pixels,
+                                uint16_t* width, uint16_t* height);
+struct NdsGpu2dHdCaptureStats {
+    uint64_t frames;          // frames whose capture matched the pattern
+    uint64_t presented;       // capture frames that produced an HD image
+    uint64_t display_only;    // non-capturing frames still showing the shadow
+    uint64_t taken;           // images handed to the presenter
+    uint64_t model_mismatch;  // native model != guest VRAM (shadow reset)
+    uint64_t readback_fail;   // hi-res 3D surface unavailable
+    uint64_t update_ns;       // VBlank cost on the scheduler thread
+    uint64_t readback_ns;     // of which: hi-res 3D readback
+    uint64_t async_ns;        // image + shadow advance, off-thread
+};
+void nds_gpu2d_hd_capture_stats(NdsGpu2dHdCaptureStats* out);
+
 void nds_gpu2d_set_direct_present(bool enabled);
 bool nds_gpu2d_direct_frame_active();
 // Presentation trails rasterization by one frame boundary. This reports the
