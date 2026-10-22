@@ -25,5 +25,13 @@ void nds_set_screen_dpad(uint16_t pressed);
 // VBlank start, before the VBlank IRQ: run the plugin and apply its input.
 void nds_title_plugin_vblank();
 
+struct NdsTitleDraw;
+// Frontend presentation: true when the plugin drew the whole canvas.
+bool nds_title_plugin_present(const NdsTitleDraw* draw);
+// After a plugin-presented frame: -1 = not handled (frontend mapping), 0 = no
+// touch, 1 = touch at *x, *y.
+int nds_title_plugin_pointer(float canvas_x, float canvas_y, uint16_t* x,
+                             uint16_t* y);
+
 // "<name>: <plugin status>", or empty when no plugin is active.
 std::string nds_title_plugin_status();

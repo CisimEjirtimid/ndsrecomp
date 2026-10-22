@@ -20,6 +20,7 @@ uint64_t g_writes = 0;
 // Host stylus seen by the latch: presses, releases, last pressed point.
 uint64_t g_touch_downs = 0, g_touch_ups = 0;
 uint16_t g_touch_last_x = 0, g_touch_last_y = 0;
+bool g_presented = false;  // the plugin drew the last presented frame
 NdsTitleInput g_host{};
 
 uint32_t host_read(uint32_t addr, void* dst, uint32_t len) {
@@ -132,6 +133,19 @@ void nds_title_plugin_vblank() {
     if (g_plugin->frame) g_plugin->frame(&kHost, &io);
     nds_apply_guest_keys(static_cast<uint16_t>(0x0FFFu & ~io.keys));
     nds_apply_guest_touch(io.touch_x, io.touch_y, io.touch_down != 0);
+}
+
+bool nds_title_plugin_present(const NdsTitleDraw* draw) {
+    g_presented = g_plugin && g_plugin->present && draw &&
+                  g_plugin->present(&kHost, draw) != 0;
+    return g_presented;
+}
+
+int nds_title_plugin_pointer(float canvas_x, float canvas_y, uint16_t* x,
+                             uint16_t* y) {
+    if (!g_plugin || !g_presented) return -1;
+    if (!g_plugin->pointer) return 0;
+    return g_plugin->pointer(canvas_x, canvas_y, x, y) ? 1 : 0;
 }
 
 std::string nds_title_plugin_status() {

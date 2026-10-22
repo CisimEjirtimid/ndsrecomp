@@ -100,6 +100,33 @@ typedef struct NdsTitleInput {
     uint16_t touch_y;
 } NdsTitleInput;
 
+/* Drawing for `present`: a canvas in the window's pixels (the coordinates
+ * mouse positions are then reported in, see `pointer`). Sources are the two
+ * physical screens as the frontend would show them (HD when available) and,
+ * while layer capture is on, each captured layer. Rectangles are
+ * {x, y, w, h}; a NULL source rectangle means the whole source. */
+enum {
+    NDS_DRAW_TOP_SCREEN = 0,
+    NDS_DRAW_BOTTOM_SCREEN = 1,
+    NDS_DRAW_LAYER_FIRST = 2 /* + engine * NDS_LAYER_COUNT + layer */
+};
+#define NDS_DRAW_LAYER(engine, layer)     (NDS_DRAW_LAYER_FIRST + (engine) * NDS_LAYER_COUNT + (layer))
+typedef struct NdsTitleDraw {
+    int width, height; /* canvas size: the window's render output, pixels */
+    /* How the frontend's layout turns the DS screens (the book layouts turn
+     * them a quarter turn, -90 or 90); a plugin keeps the game's orientation
+     * by turning them the same way. */
+    float screen_degrees;
+    /* Source size in pixels; 0 when the source is unavailable. */
+    int (*source_size)(int source, int* w, int* h);
+    /* Draw `src` of `source` into `dst`, rotated `degrees` clockwise about
+     * the destination's centre, with `alpha` 0..1. `smooth` picks linear
+     * filtering (1) or nearest (0). */
+    void (*draw)(int source, const float* src, const float* dst, float degrees,
+                 float alpha, int smooth);
+    void (*fill)(const float* dst, uint32_t argb);
+} NdsTitleDraw;
+
 typedef struct NdsTitlePlugin {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
     const char* name;
@@ -115,6 +142,16 @@ typedef struct NdsTitlePlugin {
     /* Short human-readable state for the debug server and logs; writes at most
      * `cap` bytes including the terminator. May be NULL. */
     void (*status)(char* out, size_t cap);
+    /* Each presented frame (single-window layouts): draw the whole canvas
+     * and return 1, or return 0 to let the frontend draw its own layout.
+     * The frontend's menu and notices are drawn on top either way. May be
+     * NULL. */
+    int (*present)(const NdsTitleHost* host, const NdsTitleDraw* draw);
+    /* After a frame the plugin presented: map a canvas position (mouse) to
+     * the stylus. Return 1 with raw bottom-screen pixels in *x / *y, or 0
+     * for "not on the touch screen". May be NULL (the mouse then never
+     * touches while the plugin presents). */
+    int (*pointer)(float canvas_x, float canvas_y, uint16_t* x, uint16_t* y);
 } NdsTitlePlugin;
 
 /* Exported by the plugin library. */

@@ -31,6 +31,7 @@
 #include "savestate_slots.h"
 #include "spu.h"
 #include "title_patches.h"
+#include "nds_title_plugin.h"
 #include "title_plugin.h"
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 #include "melonds_compute/ComputeHost.h"
@@ -945,6 +946,17 @@ struct TouchMapping {
 
 void set_touch_from_mouse(float x, float y, bool down,
                           const TouchMapping& mapping) {
+    uint16_t plugin_x = 0, plugin_y = 0;
+    switch (nds_title_plugin_pointer(x, y, &plugin_x, &plugin_y)) {
+    case 1:
+        nds_set_touch(plugin_x, plugin_y, down);
+        return;
+    case 0:
+        nds_set_touch(0, 0, false);
+        return;
+    default:
+        break;  // the frontend's own layout
+    }
     if (nds_screen_layout_is_book(mapping.layout)) {
         const bool left_handed =
             mapping.layout == NdsScreenLayout::BookLeftHanded;
@@ -1455,7 +1467,10 @@ uint32_t fullscreen_flags(NdsFullscreenMode mode) {
 }
 #endif
 
+void plugin_canvas_destroy();
+
 void destroy_presentation(FrontendPresentation& presentation) {
+    plugin_canvas_destroy();
     if (presentation.book_menu) SDL_DestroyTexture(presentation.book_menu);
     presentation.book_menu = nullptr;
     for (int screen = 0; screen < 2; ++screen) {
@@ -2156,6 +2171,172 @@ void draw_book_menu(FrontendPresentation& presentation,
     render_texture(renderer, presentation.book_menu, nullptr);
 }
 
+// ---- Title plugin presentation (plugin_api/nds_title_plugin.h) ----------
+// One single-window canvas per frame. Layer textures are uploaded lazily,
+// once per captured frame, the first time the plugin draws them.
+struct PluginCanvas {
+    FrontendPresentation* presentation = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* layers[2][NDS_LAYER_COUNT]{};
+    uint64_t uploaded[2][NDS_LAYER_COUNT]{};
+    NdsGpu2dLayers frame{};
+    bool have_frame = false;
+};
+PluginCanvas g_canvas;
+
+void plugin_canvas_destroy() {
+    for (auto& engine : g_canvas.layers)
+        for (SDL_Texture*& texture : engine) {
+            if (texture) SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+    g_canvas = PluginCanvas{};
+}
+
+bool texture_size(SDL_Texture* texture, float* w, float* h) {
+#if defined(NDS_HAVE_SDL3)
+    return SDL_GetTextureSize(texture, w, h);
+#else
+    int iw = 0, ih = 0;
+    if (SDL_QueryTexture(texture, nullptr, nullptr, &iw, &ih) != 0) return false;
+    *w = static_cast<float>(iw);
+    *h = static_cast<float>(ih);
+    return true;
+#endif
+}
+
+// The texture for a draw source and its size in DS pixels.
+SDL_Texture* plugin_source(int source, int* w, int* h) {
+    FrontendPresentation* const p = g_canvas.presentation;
+    if (!p) return nullptr;
+    if (source == NDS_DRAW_TOP_SCREEN || source == NDS_DRAW_BOTTOM_SCREEN) {
+        *w = p->screen_widths[source];
+        *h = kScreenHeight;
+        // HD display capture's image when this frame has one.
+        return p->screen_source[source] ? p->screen_source[source]
+                                        : p->textures[source];
+    }
+    const int index = source - NDS_DRAW_LAYER_FIRST;
+    if (index < 0 || index >= 2 * NDS_LAYER_COUNT || !g_canvas.have_frame)
+        return nullptr;
+    const int engine = index / NDS_LAYER_COUNT;
+    const int layer = index % NDS_LAYER_COUNT;
+    SDL_Texture*& texture = g_canvas.layers[engine][layer];
+    if (!texture) {
+        texture = SDL_CreateTexture(g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING, kScreenWidth,
+                                    kScreenHeight);
+        if (!texture) return nullptr;
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        g_canvas.uploaded[engine][layer] = 0;
+    }
+    if (g_canvas.uploaded[engine][layer] != g_canvas.frame.frame) {
+        SDL_UpdateTexture(texture, nullptr, g_canvas.frame.pixels[engine][layer],
+                          kScreenWidth * sizeof(uint32_t));
+        g_canvas.uploaded[engine][layer] = g_canvas.frame.frame;
+    }
+    *w = kScreenWidth;
+    *h = kScreenHeight;
+    return texture;
+}
+
+int plugin_source_size(int source, int* w, int* h) {
+    int sw = 0, sh = 0;
+    if (!plugin_source(source, &sw, &sh)) return 0;
+    if (w) *w = sw;
+    if (h) *h = sh;
+    return 1;
+}
+
+void plugin_draw(int source, const float* src, const float* dst, float degrees,
+                 float alpha, int smooth) {
+    int sw = 0, sh = 0;
+    SDL_Texture* texture = plugin_source(source, &sw, &sh);
+    if (!texture || !dst) return;
+    float tw = 0.0f, th = 0.0f;
+    if (!texture_size(texture, &tw, &th)) return;
+    // Source rectangles are in DS pixels; HD textures are larger.
+    const float sx = tw / static_cast<float>(sw), sy = th / static_cast<float>(sh);
+    const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
+    SDL_SetTextureAlphaMod(texture, a);
+    if (smooth) set_texture_scale_linear(texture);
+    else set_texture_scale_nearest(texture);
+#if defined(NDS_HAVE_SDL3)
+    SDL_FRect s{0.0f, 0.0f, tw, th};
+    if (src) s = SDL_FRect{src[0] * sx, src[1] * sy, src[2] * sx, src[3] * sy};
+    const SDL_FRect d{dst[0], dst[1], dst[2], dst[3]};
+    SDL_RenderTextureRotated(g_canvas.renderer, texture, &s, &d, degrees,
+                             nullptr, SDL_FLIP_NONE);
+#else
+    SDL_Rect s{0, 0, static_cast<int>(tw), static_cast<int>(th)};
+    if (src)
+        s = SDL_Rect{static_cast<int>(src[0] * sx), static_cast<int>(src[1] * sy),
+                     static_cast<int>(src[2] * sx), static_cast<int>(src[3] * sy)};
+    const SDL_FRect d{dst[0], dst[1], dst[2], dst[3]};
+    SDL_RenderCopyExF(g_canvas.renderer, texture, &s, &d, degrees, nullptr,
+                      SDL_FLIP_NONE);
+#endif
+    SDL_SetTextureAlphaMod(texture, 255);
+}
+
+void plugin_fill(const float* dst, uint32_t argb) {
+    if (!dst || !g_canvas.renderer) return;
+    SDL_SetRenderDrawBlendMode(g_canvas.renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(g_canvas.renderer, (argb >> 16) & 0xFFu,
+                           (argb >> 8) & 0xFFu, argb & 0xFFu, argb >> 24);
+#if defined(NDS_HAVE_SDL3)
+    const SDL_FRect r{dst[0], dst[1], dst[2], dst[3]};
+    SDL_RenderFillRect(g_canvas.renderer, &r);
+#else
+    const SDL_FRect r{dst[0], dst[1], dst[2], dst[3]};
+    SDL_RenderFillRectF(g_canvas.renderer, &r);
+#endif
+    SDL_SetRenderDrawBlendMode(g_canvas.renderer, SDL_BLENDMODE_NONE);
+}
+
+void render_output_size(SDL_Renderer* renderer, int* w, int* h) {
+#if defined(NDS_HAVE_SDL3)
+    SDL_GetCurrentRenderOutputSize(renderer, w, h);
+#else
+    SDL_GetRendererOutputSize(renderer, w, h);
+#endif
+}
+
+// Lets the title plugin draw the single window. Its canvas is the window's
+// render output in pixels, so a remaster layout can use any window shape;
+// mouse events convert through the transform the last frame used, so they
+// arrive in the same pixels. When the plugin declines, the frontend's own
+// logical canvas (`width` x `height`) comes back. True when it drew.
+bool present_through_plugin(FrontendPresentation& presentation,
+                            SDL_Renderer* renderer, int width, int height,
+                            double screen_degrees) {
+    if (!nds_title_plugin_active()) return false;
+#if defined(NDS_HAVE_SDL3)
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderScale(renderer, 1.0f, 1.0f);
+    SDL_SetRenderViewport(renderer, nullptr);
+#else
+    SDL_RenderSetLogicalSize(renderer, 0, 0);
+    SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+    SDL_RenderSetViewport(renderer, nullptr);
+#endif
+    int output_w = 0, output_h = 0;
+    render_output_size(renderer, &output_w, &output_h);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    g_canvas.presentation = &presentation;
+    g_canvas.renderer = renderer;
+    g_canvas.have_frame = nds_gpu2d_layers(&g_canvas.frame);
+    const NdsTitleDraw draw{output_w, output_h,
+                            static_cast<float>(screen_degrees),
+                            plugin_source_size, plugin_draw, plugin_fill};
+    (void)width;
+    (void)height;
+    // The caller re-applies its logical transform when this declines.
+    return nds_title_plugin_present(&draw);
+}
+
 PresentationTicks present_screens(FrontendPresentation& presentation,
                                   const uint32_t* top_pixels,
                                   int top_width,
@@ -2256,11 +2437,31 @@ PresentationTicks present_screens(FrontendPresentation& presentation,
     if (!presentation.separate) {
         SDL_Renderer* renderer = presentation.renderers[0];
         start = SDL_GetPerformanceCounter();
-        apply_logical_transform(renderer, presentation.logical_sizes[0][0],
-                                presentation.logical_sizes[0][1]);
-        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
-        SDL_RenderClear(renderer);
-        if (presentation.book) {
+        // The canvas the layouts below draw on (logical pixels).
+        const int canvas_w = presentation.logical_sizes[0][0];
+        const int canvas_h = presentation.logical_sizes[0][1];
+        // A title plugin may draw the whole window (not while the settings
+        // menu is open: the menu keeps the frontend's own layout).
+        const bool menu_open = runtime_ui && recomp_runtime_ui_is_open(runtime_ui);
+        const double screen_degrees =
+            presentation.book
+                ? nds_book_rotation_degrees(presentation.book_left_handed)
+                : 0.0;
+        const bool plugin_drew =
+            !menu_open && present_through_plugin(presentation, renderer,
+                                                 canvas_w, canvas_h,
+                                                 screen_degrees);
+        if (!plugin_drew) {
+            apply_logical_transform(renderer, canvas_w, canvas_h);
+            SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255);
+            SDL_RenderClear(renderer);
+        }
+        if (plugin_drew) {
+            int output_w = 0, output_h = 0;
+            render_output_size(renderer, &output_w, &output_h);
+            draw_savestate_notice(renderer, SDL_Rect{0, 0, output_w, output_h},
+                                  savestate_notice);
+        } else if (presentation.book) {
             const double degrees =
                 nds_book_rotation_degrees(presentation.book_left_handed);
             render_screen(presentation, 0, book_destination(presentation, 0),
