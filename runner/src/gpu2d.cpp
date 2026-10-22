@@ -128,6 +128,23 @@ using AdaptiveFrame = std::array<uint32_t, kMaxAdaptiveWidth * 192>;
 // VBlank.
 std::array<std::array<Frame, 2>, 2> g_fb{}; // [buffer][screen], 0xFFRRGGBB
 std::array<AdaptiveFrame, 2> g_adaptive_frame{};
+// Per-layer capture (nds_gpu2d_set_layer_capture). Lines write the back
+// frame (each line its own rows, so pool workers never share a pixel); the
+// VBlank publishes it.
+struct LayerFrame {
+    std::array<std::array<std::vector<uint32_t>, NDS_GPU2D_LAYER_COUNT>, 2> pixels;
+    std::array<std::vector<uint8_t>, 2> window;
+    std::array<std::array<uint32_t, 192>, 2> backdrop{};
+    std::array<uint32_t, 2> dispcnt{};
+    std::array<std::array<uint16_t, 4>, 2> bgcnt{};
+    uint8_t top_engine = 0;
+    uint64_t frame = 0;
+};
+bool g_layer_capture = false;
+std::array<LayerFrame, 2> g_layer_frames;
+unsigned g_layer_back = 0;
+bool g_layer_valid = false;
+uint64_t g_layer_vblanks = 0;
 // The threaded renderer begins the next 3D frame at VCount 215, before the
 // frontend presents the just-completed 2D buffer at the following frame
 // boundary. Snapshot the wide lines while 2D consumes them so adaptive
@@ -201,7 +218,9 @@ bool profiling() {
 }
 
 NdsGpu2dDirectClass direct_scene_class() {
-    if (!g_direct_present_enabled) return NDS_GPU2D_DIRECT_DISABLED;
+    // Layer capture needs every line rendered on the CPU.
+    if (!g_direct_present_enabled || g_layer_capture)
+        return NDS_GPU2D_DIRECT_DISABLED;
     if (!enabled(0)) return NDS_GPU2D_DIRECT_ENGINE_OFF;
     Unit& u = g_unit[0];
     if ((u.capture & 0x80000000u) != 0u || u.capture_latch)
@@ -1814,6 +1833,61 @@ bool line_forceblank(const LineJob& job, int engine) {
            (job.unit[engine].dispcnt & 0x80u);
 }
 
+// Layer capture for one engine line. `composed`: compose_line6 ran for this
+// line, so `sc` holds its decoded BG and OBJ lines.
+void record_layer_line(const LineJob& job, int engine, const LineScratch& sc,
+                       bool composed) {
+    LayerFrame& f = g_layer_frames[g_layer_back];
+    const int y = job.y;
+    const size_t row = static_cast<size_t>(y) * 256u;
+    for (auto& layer : f.pixels[engine])
+        std::fill_n(layer.data() + row, 256, 0u);
+    std::fill_n(f.window[engine].data() + row, 256, uint8_t{0});
+    f.backdrop[engine][y] = 0xFF000000u;
+    if (!composed) return;
+
+    const Unit& u = job.unit[engine];
+    const bool bg0_3d = engine == 0 && job.bg0_3d;
+    const uint32_t* const lut = rgb32_lut();
+    f.backdrop[engine][y] = lut[view16(job.palette[engine], 0) & 0x7FFFu];
+    size_t i = 0;
+    const uint8_t active_mask = bg_active_mask(u, bg0_3d);
+    for (int bg = 0; bg < 4; ++bg) {
+        if (!(active_mask & (1u << bg))) continue;
+        const BgLine& l = sc.bg_lines[i++];
+        uint32_t* const out = f.pixels[engine][bg].data() + row;
+        for (int x = 0; x < 256; ++x) {
+            const uint16_t c = l.color[x];
+            if (c & 0x8000u) out[x] = lut[c & 0x7FFFu];
+        }
+    }
+    uint32_t* const obj = f.pixels[engine][NDS_GPU2D_LAYER_OBJ].data() + row;
+    uint8_t* const window = f.window[engine].data() + row;
+    const NdsGpu2dWindowState window_state{u.dispcnt, u.win};
+    for (int x = 0; x < 256; ++x) {
+        const Pixel& o = sc.obj[x];
+        uint8_t w = nds_gpu2d_window_mask(window_state, static_cast<uint8_t>(x),
+                                          static_cast<uint8_t>(y),
+                                          sc.obj_window[x] != 0u);
+        if (o.valid) {
+            obj[x] = (to_rgb32(o.color) & 0x00FFFFFFu) |
+                     (o.alpha ? 0x80000000u : 0xFF000000u);
+            w = static_cast<uint8_t>((w & 0x3Fu) | ((o.priority & 3u) << 6));
+        }
+        window[x] = w;
+    }
+    if (bg0_3d && job.line3d) {
+        uint32_t* const out = f.pixels[0][NDS_GPU2D_LAYER_3D].data() + row;
+        for (int x = 0; x < 256; ++x) {
+            const uint32_t c3 = job.line3d[x];
+            const uint32_t a3 = (c3 >> 24) & 0x1Fu;
+            if (a3)
+                out[x] = (to_rgb32(c3 & 0x003F3F3Fu) & 0x00FFFFFFu) |
+                         ((a3 * 255u / 31u) << 24);
+        }
+    }
+}
+
 void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const Unit& u = job.unit[engine];
     const int y = job.y;
@@ -1823,6 +1897,7 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const uint8_t* const oam = job.oam[engine];
     if (line_forceblank(job, engine)) {
         std::fill_n(dst, 256, 0xFFFFFFFFu);
+        if (g_layer_capture) record_layer_line(job, engine, sc, false);
         return;
     }
     const NdsVramRendererView& vram = *job.vram[engine];
@@ -1832,13 +1907,13 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const bool cap = engine == 0 && job.cap;
     const bool bg0_3d = engine == 0 && job.bg0_3d;
 
-    if (line_general_path(u, engine, bg0_3d, cap)) {
+    if (g_layer_capture || line_general_path(u, engine, bg0_3d, cap)) {
         // General path: mirror melonDS DrawScanline ordering — composite
         // (when the display or capture consumes it), display-mode mux,
         // capture, master brightness on every mode except screen-off.
         const uint32_t* const line3d = (engine == 0) ? job.line3d : nullptr;
         std::array<uint32_t, 256>& comp6 = sc.comp6;
-        const bool need_comp =
+        const bool need_comp = g_layer_capture ||
             mode == 1u || (cap && !(u.capture & 0x01000000u));
         const bool hd_record = engine == 0 && job.hdcap_seq != 0u;
         if (need_comp)
@@ -1851,6 +1926,7 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
         if (hd_record)
             record_hd_capture_line(job, u, cap,
                                    need_comp ? comp6.data() : nullptr, line3d);
+        if (g_layer_capture) record_layer_line(job, engine, sc, true);
         const uint32_t mbmode = u.master_bright >> 14;
         const uint32_t mb = std::min<uint32_t>(16, u.master_bright & 0x1Fu);
         auto bright = [&](uint32_t c6) {
@@ -2904,6 +2980,18 @@ void nds_gpu2d_vblank(){
     // next frame boundary, after VCount 215 has started the next 3D frame,
     // so the hi-res 3D this frame consumed is only still in hand here.
     if (g_hdcap_enabled) hd_capture_end_frame(static_cast<uint32_t>(g_front ^ 1));
+    ++g_layer_vblanks;
+    if (g_layer_capture) {
+        LayerFrame& f = g_layer_frames[g_layer_back];
+        for (int e = 0; e < 2; ++e) {
+            f.dispcnt[e] = g_unit[e].dispcnt;
+            for (int bg = 0; bg < 4; ++bg) f.bgcnt[e][bg] = g_unit[e].bgcnt[bg];
+        }
+        f.top_engine = (nds_powercontrol9() & 0x8000u) ? 0u : 1u;
+        f.frame = g_layer_vblanks;
+        g_layer_back ^= 1u;
+        g_layer_valid = true;
+    }
     // melonDS Unit::VBlank: the capture enable bit auto-clears at line 192
     // only if it latched at line 0 this frame.
     for (auto& u : g_unit) {
@@ -2917,6 +3005,40 @@ const uint32_t* nds_gpu2d_framebuffer(int screen){
     drain_pool(NDS_GPU2D_FENCE_PRESENT);
     return g_fb[g_front][screen & 1].data();
 }
+void nds_gpu2d_set_layer_capture(bool enabled) {
+    if (enabled == g_layer_capture) return;
+    drain_pool(NDS_GPU2D_FENCE_FRAME);
+    if (enabled) {
+        for (auto& f : g_layer_frames) {
+            for (int e = 0; e < 2; ++e) {
+                for (auto& layer : f.pixels[e]) layer.assign(256u * 192u, 0u);
+                f.window[e].assign(256u * 192u, 0u);
+            }
+        }
+    }
+    g_layer_capture = enabled;
+    g_layer_valid = false;
+}
+
+bool nds_gpu2d_layer_capture() { return g_layer_capture; }
+
+bool nds_gpu2d_layers(NdsGpu2dLayers* out) {
+    if (!out || !g_layer_capture || !g_layer_valid) return false;
+    drain_pool(NDS_GPU2D_FENCE_PRESENT);
+    const LayerFrame& f = g_layer_frames[g_layer_back ^ 1u];
+    out->frame = f.frame;
+    for (int e = 0; e < 2; ++e) {
+        for (int l = 0; l < NDS_GPU2D_LAYER_COUNT; ++l)
+            out->pixels[e][l] = f.pixels[e][l].data();
+        out->window[e] = f.window[e].data();
+        out->backdrop[e] = f.backdrop[e].data();
+        out->dispcnt[e] = f.dispcnt[e];
+        for (int bg = 0; bg < 4; ++bg) out->bgcnt[e][bg] = f.bgcnt[e][bg];
+    }
+    out->top_engine = f.top_engine;
+    return true;
+}
+
 void nds_gpu2d_set_adaptive_skybox_fill(bool enabled) {
     g_adaptive_skybox_fill = enabled;
 }

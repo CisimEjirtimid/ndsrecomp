@@ -3136,9 +3136,6 @@ void nds_tick_display(unsigned long long cyc) {
             g_in_vblank = false;
         } else if (g_vcount == 192u) {
             g_in_vblank = true;
-            // Before the VBlank IRQ: games run their per-frame logic from
-            // here, so the plugin's input and hooks land ahead of it.
-            nds_title_plugin_vblank();
             if (g_dispstat[0] & 0x0008u) {
                 ++g_counts.vblank9;
                 nds_raise_irq(0, 0x00000001u);
@@ -3152,6 +3149,10 @@ void nds_tick_display(unsigned long long cyc) {
             // latch and geometry bank flip.
             nds_gpu2d_vblank();
             nds_gpu3d_vblank();
+            // Before the guest's VBlank handler runs (games run their
+            // per-frame logic from it), after the frame's 2D layers are
+            // published: the plugin's input and hooks land ahead of it.
+            nds_title_plugin_vblank();
         } else if (g_vcount == 144u) {
             nds_gpu3d_vcount144();   // renderer frame-sync point
         } else if (g_vcount == 215u) {

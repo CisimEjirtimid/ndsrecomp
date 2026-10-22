@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "state.h"
+#include "gpu2d.h"
 #include "io.h"
 #include "runtime_arm.h"
 #include "nds_title_plugin.h"
@@ -41,13 +42,32 @@ uint32_t host_write(uint32_t addr, const void* src, uint32_t len) {
 
 uint64_t host_frame() { return g_frame; }
 
+void host_capture_layers(int enable) { nds_gpu2d_set_layer_capture(enable != 0); }
+
+int host_layers(NdsTitleLayers* out) {
+    static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
+    NdsGpu2dLayers l{};
+    if (!out || !nds_gpu2d_layers(&l)) return 0;
+    out->frame = l.frame;
+    for (int e = 0; e < 2; ++e) {
+        for (int i = 0; i < NDS_LAYER_COUNT; ++i) out->pixels[e][i] = l.pixels[e][i];
+        out->window[e] = l.window[e];
+        out->backdrop[e] = l.backdrop[e];
+        out->dispcnt[e] = l.dispcnt[e];
+        for (int bg = 0; bg < 4; ++bg) out->bgcnt[e][bg] = l.bgcnt[e][bg];
+    }
+    out->top_engine = l.top_engine;
+    return 1;
+}
+
 void host_log(const char* message) {
     std::fprintf(stderr, "[%s] %s\n", g_plugin ? g_plugin->name : "plugin",
                  message);
 }
 
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
-                            host_log, host_write};
+                            host_log, host_write, host_capture_layers,
+                            host_layers};
 
 }  // namespace
 
