@@ -1415,17 +1415,41 @@ void nds_gpu3d_set_view_roll(int quarters) {
 
 int nds_gpu3d_view_roll() { return g_nds.GPU.GPU3D.GetHostViewRoll(); }
 
+void nds_gpu3d_set_view_roll_skip(bool skip) {
+    g_nds.GPU.GPU3D.SetHostViewRollSkip(skip);
+}
+
+bool nds_gpu3d_view_roll_skip() { return g_nds.GPU.GPU3D.GetHostViewRollSkip(); }
+
 const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
+    // While a roll is requested, only rolled frames replace the image: a
+    // title that shares the 3D engine between passes (another screen, an
+    // object-picking pass) rolls only the pass it shows, and the others
+    // keep the last rolled one on screen.
+    static const uint32_t* held = nullptr;
+    static uint32_t held_w = 0, held_h = 0;
+    auto keep = [&](const uint32_t* image, uint32_t w, uint32_t h) {
+        held = image;
+        held_w = w;
+        held_h = h;
+        if (width) *width = w;
+        if (height) *height = h;
+        return image;
+    };
+    if (g_nds.GPU.GPU3D.GetHostViewRoll() != 0 &&
+        !g_nds.GPU.GPU3D.LastRenderHostRolled()) {
+        if (!held) return nullptr;
+        if (width) *width = held_w;
+        if (height) *height = held_h;
+        return held;
+    }
 #if defined(NDS_GPU3D_HAVE_READ_HIRES_INTO)
     // The hi-res surface where an accelerated renderer has one: its bytes
     // are B, G, R, A, i.e. 0xAARRGGBB words.
     static std::vector<uint8_t> hires;
     uint32_t hw = 0, hh = 0;
-    if (nds_gpu3d_read_hires_into(&hires, &hw, &hh)) {
-        if (width) *width = hw;
-        if (height) *height = hh;
-        return reinterpret_cast<const uint32_t*>(hires.data());
-    }
+    if (nds_gpu3d_read_hires_into(&hires, &hw, &hh))
+        return keep(reinterpret_cast<const uint32_t*>(hires.data()), hw, hh);
 #endif
     static std::vector<uint32_t> native;
     const uint32_t w = nds_gpu3d_output_width();
@@ -1441,9 +1465,11 @@ const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
                      (c8((c >> 8) & 0x3Fu) << 8) | c8((c >> 16) & 0x3Fu);
         }
     }
-    if (width) *width = w;
-    if (height) *height = 192u;
-    return native.data();
+    return keep(native.data(), w, 192u);
+}
+
+bool nds_gpu3d_last_render_rolled() {
+    return g_nds.GPU.GPU3D.LastRenderHostRolled();
 }
 
 void nds_gpu3d_set_guest_wide_projection(bool enabled) {

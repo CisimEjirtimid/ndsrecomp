@@ -1174,13 +1174,16 @@ std::string handle(const std::string& line) {
         return out;
     }
     if (cmd == "view_roll") {
-        // {"cmd":"view_roll","quarters":1,"width":384}: host-only 3D view
-        // roll on a widened raster (software renderer: any time).
+        // {"cmd":"view_roll","quarters":1,"width":384,"skip":0}: host-only
+        // 3D view roll on a widened raster (software renderer: any time);
+        // "skip":1 submits the next pass unrolled (skip_view_roll).
         const uint64_t width = json_u64(line, "width", 0);
         if (width && !nds_gpu3d_set_output_width(static_cast<uint16_t>(width)))
             return "{\"error\":\"width unavailable\"}";
         nds_gpu3d_set_view_roll(static_cast<int>(json_u64(line, "quarters", 0)));
+        nds_gpu3d_set_view_roll_skip(json_u64(line, "skip", 0) != 0);
         return "{\"quarters\":" + std::to_string(nds_gpu3d_view_roll()) +
+               ",\"skip\":" + std::to_string(nds_gpu3d_view_roll_skip() ? 1 : 0) +
                ",\"width\":" + std::to_string(nds_gpu3d_output_width()) + "}";
     }
 
@@ -1194,7 +1197,9 @@ std::string handle(const std::string& line) {
             if (!row) return "{\"error\":\"no wide line\"}";
             append_hex(hex, reinterpret_cast<const uint8_t*>(row), width * 4u);
         }
-        return "{\"width\":" + std::to_string(width) + ",\"hex\":\"" + hex + "\"}";
+        return "{\"width\":" + std::to_string(width) + ",\"rolled\":" +
+               std::to_string(nds_gpu3d_last_render_rolled() ? 1 : 0) +
+               ",\"hex\":\"" + hex + "\"}";
     }
 
     if (cmd == "layer_capture") {

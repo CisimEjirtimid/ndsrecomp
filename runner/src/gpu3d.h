@@ -175,14 +175,23 @@ uint16_t nds_gpu3d_output_width();
 // the enhanced width instead of only the full-screen one.
 // Host-only view roll for title presentation layers (see GPU3D.h
 // SetHostViewRoll): turn the 3D view by `quarters` quarter turns and spread
-// a square guest viewport across the whole output width.
+// the guest viewport across the whole output width, filling its height.
 void nds_gpu3d_set_view_roll(int quarters);
 int nds_gpu3d_view_roll();
+// While set, vertices are submitted unrolled although the roll stays
+// requested, and the wide image keeps the last rolled frame: for passes a
+// title reads back (object picking) or shows on its other screen.
+void nds_gpu3d_set_view_roll_skip(bool skip);
+bool nds_gpu3d_view_roll_skip();
 // The host-only wide 3D image of the last rasterized frame, output width x
 // 192 (times the internal scale where a hi-res surface is available), as
-// 0xAARRGGBB words whose alpha is the 3D alpha (present it opaque). Valid
+// 0xAARRGGBB words whose alpha is the 3D alpha (present it opaque). While a
+// view roll is set, the last frame rendered with it: frames rendered
+// without it (passes the title did not roll) keep the previous image. Valid
 // until the next call; nullptr when unavailable.
 const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height);
+// Whether the last rasterized frame was submitted under the view roll.
+bool nds_gpu3d_last_render_rolled();
 void nds_gpu3d_set_guest_wide_projection(bool enabled);
 bool nds_gpu3d_guest_wide_projection();
 bool nds_gpu3d_projection_has_perspective();

@@ -68,6 +68,8 @@ struct Polygon
     bool FacingView;
     bool Translucent;
     bool PerspectiveProjection = false;
+    // Host only (never saved): submitted while the host view roll was on.
+    bool HostRolled = false;
 
     bool IsShadowMask;
     bool IsShadow;
@@ -118,10 +120,19 @@ public:
     void SetGuestWideProjection(bool enable) noexcept;
     [[nodiscard]] bool GetGuestWideProjection() const noexcept { return GuestWideProjection; }
     // Host-only view roll (title presentation layers): turn clip space by
-    // `quarters` quarter turns and spread a square viewport across the whole
-    // RenderWidth band with square pixels. 0 = off.
+    // `quarters` quarter turns and spread the viewport across the whole
+    // RenderWidth band with square pixels, the turned view filling the
+    // viewport's height. 0 = off.
     void SetHostViewRoll(int quarters) noexcept { HostViewRoll = quarters & 3; }
     [[nodiscard]] int GetHostViewRoll() const noexcept { return HostViewRoll; }
+    // Host only: while set, vertices are submitted unrolled although a roll
+    // stays requested (a pass the title reads back or shows elsewhere).
+    void SetHostViewRollSkip(bool skip) noexcept { HostViewRollSkip = skip; }
+    [[nodiscard]] bool GetHostViewRollSkip() const noexcept { return HostViewRollSkip; }
+    // Whether the last frame rendered (VCount 215) has polygons submitted
+    // under the view roll: a title that shares the 3D engine between passes
+    // rolls only some of them, and the host keeps showing the last one.
+    [[nodiscard]] bool LastRenderHostRolled() const noexcept { return RenderedHostRolled; }
     [[nodiscard]] bool RenderFrameHasPerspectiveProjection() const noexcept;
     u32* GetLine(int line) noexcept;
     const u32* GetAttrLine(int line) noexcept;
@@ -210,13 +221,16 @@ private:
     // already spans RenderWidth, so the host must not rescale clip X on top of
     // it, and every viewport (full or partial) maps linearly across the band.
     bool GuestWideProjection = false;
-    // See SetHostViewRoll. Applies only to square viewports with RenderWidth
+    // See SetHostViewRoll. Applies to any non-empty viewport with RenderWidth
     // above 256, where it replaces the full-viewport clip X widening.
     int HostViewRoll = 0;
+    bool HostViewRollSkip = false;
+    bool RenderEmptyHostRolled = false;  // swapped in empty under the roll
+    bool RenderedHostRolled = false;
     [[nodiscard]] bool HostViewRollActive() const noexcept
     {
-        return HostViewRoll != 0 && RenderWidth > 256 &&
-               Viewport[4] == Viewport[5] && Viewport[4] != 0;
+        return HostViewRoll != 0 && !HostViewRollSkip && RenderWidth > 256 &&
+               Viewport[4] != 0 && Viewport[5] != 0;
     }
 
 public:

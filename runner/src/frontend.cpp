@@ -2213,8 +2213,10 @@ bool texture_size(SDL_Texture* texture, float* w, float* h) {
 #endif
 }
 
-// The texture for a draw source and its size in DS pixels.
-SDL_Texture* plugin_source(int source, int* w, int* h) {
+// The texture for a draw source and its size in DS pixels. `keep`
+// (NDS_DRAW_KEEP): a layer or the wide 3D image as last uploaded, without
+// refreshing it from this frame.
+SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
     FrontendPresentation* const p = g_canvas.presentation;
     if (!p) return nullptr;
     if (source == NDS_DRAW_TOP_SCREEN || source == NDS_DRAW_BOTTOM_SCREEN) {
@@ -2225,7 +2227,7 @@ SDL_Texture* plugin_source(int source, int* w, int* h) {
                                         : p->textures[source];
     }
     if (source == NDS_DRAW_3D) {
-        if (!g_canvas.wide3d_fresh) {
+        if (!g_canvas.wide3d_fresh && !(keep && g_canvas.wide3d)) {
             uint32_t iw = 0, ih = 0;
             const uint32_t* const pixels = nds_gpu3d_wide_image(&iw, &ih);
             if (!pixels) return nullptr;
@@ -2267,7 +2269,8 @@ SDL_Texture* plugin_source(int source, int* w, int* h) {
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
         g_canvas.uploaded[engine][layer] = 0;
     }
-    if (g_canvas.uploaded[engine][layer] != g_canvas.frame.frame) {
+    if (g_canvas.uploaded[engine][layer] != g_canvas.frame.frame &&
+        !(keep && g_canvas.uploaded[engine][layer] != 0)) {
         SDL_UpdateTexture(texture, nullptr, g_canvas.frame.pixels[engine][layer],
                           kScreenWidth * sizeof(uint32_t));
         g_canvas.uploaded[engine][layer] = g_canvas.frame.frame;
@@ -2286,9 +2289,11 @@ int plugin_source_size(int source, int* w, int* h) {
 }
 
 void plugin_draw(int source, const float* src, const float* dst, float degrees,
-                 float alpha, int smooth) {
+                 float alpha, int flags) {
+    const bool smooth = (flags & NDS_DRAW_SMOOTH) != 0;
     int sw = 0, sh = 0;
-    SDL_Texture* texture = plugin_source(source, &sw, &sh);
+    SDL_Texture* texture =
+        plugin_source(source, &sw, &sh, (flags & NDS_DRAW_KEEP) != 0);
     if (!texture || !dst) return;
     float tw = 0.0f, th = 0.0f;
     if (!texture_size(texture, &tw, &th)) return;

@@ -50,6 +50,8 @@ void host_capture_layers(int engines) {
 
 void host_set_view_roll(int quarters) { nds_gpu3d_set_view_roll(quarters); }
 
+void host_skip_view_roll(int skip) { nds_gpu3d_set_view_roll_skip(skip != 0); }
+
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
     NdsGpu2dLayers l{};
@@ -73,7 +75,8 @@ void host_log(const char* message) {
 
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
                             host_log, host_write, host_capture_layers,
-                            host_layers, host_set_view_roll};
+                            host_layers, host_set_view_roll,
+                            host_skip_view_roll};
 
 }  // namespace
 
