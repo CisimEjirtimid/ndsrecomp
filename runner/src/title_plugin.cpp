@@ -16,6 +16,9 @@ namespace {
 const NdsTitlePlugin* g_plugin = nullptr;
 uint64_t g_frame = 0;
 uint64_t g_writes = 0;
+// Host stylus seen by the latch: presses, releases, last pressed point.
+uint64_t g_touch_downs = 0, g_touch_ups = 0;
+uint16_t g_touch_last_x = 0, g_touch_last_y = 0;
 NdsTitleInput g_host{};
 
 uint32_t host_read(uint32_t addr, void* dst, uint32_t len) {
@@ -89,6 +92,12 @@ void nds_set_screen_dpad(uint16_t pressed) {
 }
 
 void nds_title_plugin_latch_touch(uint16_t x, uint16_t y, bool down) {
+    if (down && !g_host.touch_down) ++g_touch_downs;
+    if (!down && g_host.touch_down) ++g_touch_ups;
+    if (down) {
+        g_touch_last_x = x;
+        g_touch_last_y = y;
+    }
     g_host.touch_down = down ? 1u : 0u;
     g_host.touch_x = down ? x : 0u;
     g_host.touch_y = down ? y : 0u;
@@ -113,5 +122,11 @@ std::string nds_title_plugin_status() {
         out += buf;
     }
     if (g_writes) out += " [" + std::to_string(g_writes) + " guest writes]";
+    if (g_touch_downs)
+        out += " [stylus " + std::to_string(g_touch_downs) + " down/" +
+               std::to_string(g_touch_ups) + " up, last (" +
+               std::to_string(g_touch_last_x) + ", " +
+               std::to_string(g_touch_last_y) + ")" +
+               (g_host.touch_down ? " held" : "") + "]";
     return out;
 }
