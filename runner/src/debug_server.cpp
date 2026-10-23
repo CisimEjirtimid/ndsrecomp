@@ -1174,9 +1174,11 @@ std::string handle(const std::string& line) {
         return out;
     }
     if (cmd == "layer_capture") {
-        nds_gpu2d_set_layer_capture(json_u64(line, "on", 1) != 0);
-        return std::string("{\"on\":") +
-               (nds_gpu2d_layer_capture() ? "true" : "false") + "}";
+        // {"cmd":"layer_capture","engines":3}: bit 0 engine A, bit 1 B.
+        nds_gpu2d_set_layer_capture(
+            static_cast<uint8_t>(json_u64(line, "engines", 3)));
+        return "{\"engines\":" +
+               std::to_string(nds_gpu2d_layer_capture()) + "}";
     }
 
     if (cmd == "layers") {

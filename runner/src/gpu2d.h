@@ -212,8 +212,10 @@ struct NdsGpu2dLayers {
     uint16_t bgcnt[2][4];
     uint8_t top_engine;
 };
-void nds_gpu2d_set_layer_capture(bool enabled);
-bool nds_gpu2d_layer_capture();
+// `engines`: bit 0 engine A, bit 1 engine B (0 = off). Only those engines pay
+// for the full compositing path; the other engine's planes stay empty.
+void nds_gpu2d_set_layer_capture(uint8_t engines);
+uint8_t nds_gpu2d_layer_capture();
 // The last completed frame's layers; false until one was recorded.
 bool nds_gpu2d_layers(NdsGpu2dLayers* out);
 
