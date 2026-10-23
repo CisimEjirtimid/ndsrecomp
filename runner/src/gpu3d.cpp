@@ -823,13 +823,17 @@ void nds_gpu3d_set_hires_readback(bool enabled) {
 #endif
 }
 
-const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height) {
+namespace {
+
+// Shared by both readback entry points: fills `out` with the hi-res surface.
+bool read_hires_to(std::vector<uint8_t>& out, uint32_t* width,
+                   uint32_t* height) {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     uint32_t w = 0;
     uint32_t h = 0;
-    if (!hires_extent(&w, &h)) return nullptr;
+    if (!hires_extent(&w, &h)) return false;
     const size_t bytes = static_cast<size_t>(w) * h * 4u;
-    g_hires_copy.resize(bytes);
+    out.resize(bytes);
     clear_compute_gl_errors();
     bool done = false;
     if (g_hires_fence && g_hires_width == w && g_hires_height == h) {
@@ -842,7 +846,7 @@ const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height) {
                 GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(bytes),
                 GL_MAP_READ_BIT);
             if (mapped) {
-                std::memcpy(g_hires_copy.data(), mapped, bytes);
+                std::memcpy(out.data(), mapped, bytes);
                 done = glUnmapBuffer(GL_PIXEL_PACK_BUFFER) == GL_TRUE;
             }
             glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
@@ -858,17 +862,30 @@ const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height) {
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
         glBindTexture(GL_TEXTURE_2D, nds_gpu3d_compute_output_texture_hires());
         glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                      g_hires_copy.data());
+                      out.data());
     }
-    if (compute_gl_stage_failed("hi-res readback")) return nullptr;
+    if (compute_gl_stage_failed("hi-res readback")) return false;
     if (width) *width = w;
     if (height) *height = h;
-    return g_hires_copy.data();
+    return true;
 #else
+    (void)out;
     (void)width;
     (void)height;
-    return nullptr;
+    return false;
 #endif
+}
+
+}  // namespace
+
+const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height) {
+    return read_hires_to(g_hires_copy, width, height) ? g_hires_copy.data()
+                                                      : nullptr;
+}
+
+bool nds_gpu3d_read_hires_into(std::vector<uint8_t>* out, uint32_t* width,
+                               uint32_t* height) {
+    return out && read_hires_to(*out, width, height);
 }
 
 bool nds_gpu3d_use_compute_renderer() {
