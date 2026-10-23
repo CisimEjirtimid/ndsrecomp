@@ -28,6 +28,8 @@ void nds_title_plugin_vblank();
 struct NdsTitleDraw;
 // Frontend presentation: true when the plugin drew the whole canvas.
 bool nds_title_plugin_present(const NdsTitleDraw* draw);
+// Whether the plugin drew the last presented frame (it then owns the mouse).
+bool nds_title_plugin_presented();
 // After a plugin-presented frame: -1 = not handled (frontend mapping), 0 = no
 // touch, 1 = touch at *x, *y.
 int nds_title_plugin_pointer(float canvas_x, float canvas_y, uint16_t* x,

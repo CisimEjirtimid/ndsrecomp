@@ -3870,8 +3870,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
             const bool relative_left_down =
                 primary_left_down ||
                 (bottom_left_down && mph_prime_unified_window_focus);
+            // A plugin-drawn frame has no frontend screen rectangles: every
+            // click is the plugin's to map (title_plugin pointer()).
             const NdsStackedRelativeMouseRoute stacked_left_route =
-                primary_left_down && !presentation.separate
+                primary_left_down && !presentation.separate &&
+                        nds_title_plugin_presented()
+                    ? NdsStackedRelativeMouseRoute::Touchscreen
+                : primary_left_down && !presentation.separate
                     ? nds_route_stacked_relative_mouse_button(
                         options.relative_mouse_touch,
                         relative_mouse.captured(), stacked_top_screen,

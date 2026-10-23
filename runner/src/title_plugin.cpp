@@ -141,6 +141,8 @@ bool nds_title_plugin_present(const NdsTitleDraw* draw) {
     return g_presented;
 }
 
+bool nds_title_plugin_presented() { return g_plugin && g_presented; }
+
 int nds_title_plugin_pointer(float canvas_x, float canvas_y, uint16_t* x,
                              uint16_t* y) {
     if (!g_plugin || !g_presented) return -1;
