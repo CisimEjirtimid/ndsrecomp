@@ -83,12 +83,22 @@ typedef struct NdsTitleHost {
      * are empty. Returns 0 when nothing is available. */
     void (*capture_layers)(int engines);
     int (*layers)(NdsTitleLayers* out);
-    /* Turn the 3D view by `quarters` quarter turns (0 = off) and spread a
-     * square guest viewport across the plugin's wide_3d_width with square
-     * pixels: a title drawn for a sideways DS renders upright and wide. Host
+    /* Turn the 3D view by `quarters` quarter turns (0 = off) and spread the
+     * guest viewport across the plugin's wide_3d_width with square pixels,
+     * the turned view filling the raster's height (a turned W x H viewport
+     * covers H * 192 / W columns in the middle, the rest is extra scenery):
+     * a title drawn for a sideways DS renders upright and wide. Host
      * only; the 2D engine (and display capture) still consumes the centre of
-     * the raster. Applies to vertices submitted after the call. */
+     * the raster, so never roll a pass the game reads back (see
+     * skip_view_roll). Applies to vertices submitted after the call. */
     void (*set_view_roll)(int quarters);
+    /* For titles that share the 3D engine between passes (the view, a
+     * picture for the other screen, an object-picking pass the game reads
+     * back through display capture): while `skip` is nonzero, vertices are
+     * submitted unrolled although the roll stays set, and NDS_DRAW_3D keeps
+     * showing the last frame rendered with the roll. Set it at VBlank start
+     * before each pass that is not the view. May be NULL (older runners). */
+    void (*skip_view_roll)(int skip);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices
@@ -121,6 +131,9 @@ enum {
 /* The host-only wide 3D image (the plugin's wide_3d_width x 192 in DS
  * pixels), e.g. the view turned by host->set_view_roll. */
 #define NDS_DRAW_3D (NDS_DRAW_LAYER_FIRST + 2 * NDS_LAYER_COUNT)
+/* NdsTitleDraw.draw flags. */
+#define NDS_DRAW_SMOOTH 1
+#define NDS_DRAW_KEEP 2
 typedef struct NdsTitleDraw {
     int width, height; /* canvas size: the window's render output, pixels */
     /* How the frontend's layout turns the DS screens (the book layouts turn
@@ -130,10 +143,12 @@ typedef struct NdsTitleDraw {
     /* Source size in pixels; 0 when the source is unavailable. */
     int (*source_size)(int source, int* w, int* h);
     /* Draw `src` of `source` into `dst`, rotated `degrees` clockwise about
-     * the destination's centre, with `alpha` 0..1. `smooth` picks linear
-     * filtering (1) or nearest (0). */
+     * the destination's centre, with `alpha` 0..1. `flags`: NDS_DRAW_SMOOTH
+     * picks linear filtering (else nearest); NDS_DRAW_KEEP draws a layer or
+     * NDS_DRAW_3D as last drawn, without refreshing it from this frame (for
+     * games that alternate what an engine shows from frame to frame). */
     void (*draw)(int source, const float* src, const float* dst, float degrees,
-                 float alpha, int smooth);
+                 float alpha, int flags);
     void (*fill)(const float* dst, uint32_t argb);
 } NdsTitleDraw;
 

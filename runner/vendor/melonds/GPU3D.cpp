@@ -481,6 +481,7 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
             file->Bool32(&poly->PerspectiveProjection);
         else if (!file->Saving)
             poly->PerspectiveProjection = false;
+        if (!file->Saving) poly->HostRolled = false;
 
         file->Bool32(&poly->IsShadowMask);
         file->Bool32(&poly->IsShadow);
@@ -1280,6 +1281,7 @@ void GPU3D::SubmitPolygon() noexcept
 
     poly->FacingView = facingview;
     poly->PerspectiveProjection = perspective_projection;
+    poly->HostRolled = HostViewRollActive();
 
     u32 texfmt = (TexParam >> 26) & 0x7;
     u32 polyalpha = (CurPolygonAttr >> 16) & 0x1F;
@@ -1438,13 +1440,20 @@ void GPU3D::SubmitVertex() noexcept
     if (HostViewRollActive())
     {
         // Turn the view a quarter (or three quarters) turn in clip space;
-        // the winding is preserved. Then keep the pixels square: clip X
-        // spans the whole band, one viewport height per two clip units.
+        // the winding is preserved. The turned view fills the viewport's
+        // lines (its turned height scaled to Viewport[5]); clip X then
+        // spans the whole band with square pixels, so the turned width
+        // takes turned_w * Viewport[5] / turned_h band pixels and the rest
+        // of the band is extra scenery to the sides.
         const s32 x = vertextrans->Position[0], y = vertextrans->Position[1];
         const s32 tx = HostViewRoll == 1 ? -y : HostViewRoll == 3 ? y : -x;
         const s32 ty = HostViewRoll == 1 ? x : HostViewRoll == 3 ? -x : -y;
+        const bool sideways = (HostViewRoll & 1) != 0;
+        const s64 turned_w = sideways ? Viewport[5] : Viewport[4];
+        const s64 turned_h = sideways ? Viewport[4] : Viewport[5];
         vertextrans->Position[0] = static_cast<s32>(
-            (static_cast<s64>(tx) * Viewport[5]) / RenderWidth);
+            (static_cast<s64>(tx) * turned_w * Viewport[5]) /
+            (turned_h * static_cast<s64>(RenderWidth)));
         vertextrans->Position[1] = ty;
     }
     else if (!GuestWideProjection &&
@@ -2574,6 +2583,8 @@ void GPU3D::VBlank() noexcept
 
                 RenderNumPolygons = NumPolygons;
                 RenderFrameIdentical = false;
+                // An empty frame has no polygons to carry the tag.
+                RenderEmptyHostRolled = NumPolygons == 0 && HostViewRollActive();
             }
             else
             {
@@ -2622,6 +2633,18 @@ void GPU3D::VBlank() noexcept
 
 void GPU3D::VCount215(GPU& gpu) noexcept
 {
+    // The frame rendered now is what the host's wide image shows until the
+    // next one, so tag it here, not at the swap.
+    RenderedHostRolled = RenderNumPolygons == 0 && RenderEmptyHostRolled;
+    for (u32 i = 0; i < RenderNumPolygons; ++i)
+    {
+        const Polygon* const polygon = RenderPolygonRAM[i];
+        if (polygon && polygon->HostRolled)
+        {
+            RenderedHostRolled = true;
+            break;
+        }
+    }
     CurrentRenderer->RenderFrame(gpu);
 }
 
