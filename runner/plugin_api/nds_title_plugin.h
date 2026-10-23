@@ -76,10 +76,12 @@ typedef struct NdsTitleHost {
     /* Write guest main RAM (0x02000000-0x023FFFFF) as the ARM9 would, at the
      * point of the call (VBlank start). Returns `len`, or 0 when refused. */
     uint32_t (*write)(uint32_t addr, const void* src, uint32_t len);
-    /* Per-layer capture. While enabled (a cost: every line takes the full
-     * compositing path), `layers` returns the frame that has just finished,
-     * valid until the next VBlank. Returns 0 when nothing is available. */
-    void (*capture_layers)(int enable);
+    /* Per-layer capture of the engines in `engines` (bit 0 engine A, bit 1
+     * engine B; 0 = off). While on (a cost: those engines take the full
+     * compositing path on every line), `layers` returns the frame that has
+     * just finished, valid until the next VBlank; the other engine's planes
+     * are empty. Returns 0 when nothing is available. */
+    void (*capture_layers)(int engines);
     int (*layers)(NdsTitleLayers* out);
 } NdsTitleHost;
 

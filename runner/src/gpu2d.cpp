@@ -140,7 +140,7 @@ struct LayerFrame {
     uint8_t top_engine = 0;
     uint64_t frame = 0;
 };
-bool g_layer_capture = false;
+uint8_t g_layer_capture = 0;  // engine mask
 std::array<LayerFrame, 2> g_layer_frames;
 unsigned g_layer_back = 0;
 bool g_layer_valid = false;
@@ -218,8 +218,8 @@ bool profiling() {
 }
 
 NdsGpu2dDirectClass direct_scene_class() {
-    // Layer capture needs every line rendered on the CPU.
-    if (!g_direct_present_enabled || g_layer_capture)
+    // Layer capture of engine A needs its lines rendered on the CPU.
+    if (!g_direct_present_enabled || (g_layer_capture & 1u))
         return NDS_GPU2D_DIRECT_DISABLED;
     if (!enabled(0)) return NDS_GPU2D_DIRECT_ENGINE_OFF;
     Unit& u = g_unit[0];
@@ -1897,7 +1897,8 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const uint8_t* const oam = job.oam[engine];
     if (line_forceblank(job, engine)) {
         std::fill_n(dst, 256, 0xFFFFFFFFu);
-        if (g_layer_capture) record_layer_line(job, engine, sc, false);
+        if (g_layer_capture & (1u << engine))
+            record_layer_line(job, engine, sc, false);
         return;
     }
     const NdsVramRendererView& vram = *job.vram[engine];
@@ -1907,13 +1908,14 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const bool cap = engine == 0 && job.cap;
     const bool bg0_3d = engine == 0 && job.bg0_3d;
 
-    if (g_layer_capture || line_general_path(u, engine, bg0_3d, cap)) {
+    const bool capture_layers = (g_layer_capture & (1u << engine)) != 0u;
+    if (capture_layers || line_general_path(u, engine, bg0_3d, cap)) {
         // General path: mirror melonDS DrawScanline ordering — composite
         // (when the display or capture consumes it), display-mode mux,
         // capture, master brightness on every mode except screen-off.
         const uint32_t* const line3d = (engine == 0) ? job.line3d : nullptr;
         std::array<uint32_t, 256>& comp6 = sc.comp6;
-        const bool need_comp = g_layer_capture ||
+        const bool need_comp = capture_layers ||
             mode == 1u || (cap && !(u.capture & 0x01000000u));
         const bool hd_record = engine == 0 && job.hdcap_seq != 0u;
         if (need_comp)
@@ -1926,7 +1928,7 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
         if (hd_record)
             record_hd_capture_line(job, u, cap,
                                    need_comp ? comp6.data() : nullptr, line3d);
-        if (g_layer_capture) record_layer_line(job, engine, sc, true);
+        if (capture_layers) record_layer_line(job, engine, sc, true);
         const uint32_t mbmode = u.master_bright >> 14;
         const uint32_t mb = std::min<uint32_t>(16, u.master_bright & 0x1Fu);
         auto bright = [&](uint32_t c6) {
@@ -3005,10 +3007,11 @@ const uint32_t* nds_gpu2d_framebuffer(int screen){
     drain_pool(NDS_GPU2D_FENCE_PRESENT);
     return g_fb[g_front][screen & 1].data();
 }
-void nds_gpu2d_set_layer_capture(bool enabled) {
-    if (enabled == g_layer_capture) return;
+void nds_gpu2d_set_layer_capture(uint8_t engines) {
+    engines &= 3u;
+    if (engines == g_layer_capture) return;
     drain_pool(NDS_GPU2D_FENCE_FRAME);
-    if (enabled) {
+    if (engines) {
         for (auto& f : g_layer_frames) {
             for (int e = 0; e < 2; ++e) {
                 for (auto& layer : f.pixels[e]) layer.assign(256u * 192u, 0u);
@@ -3016,11 +3019,11 @@ void nds_gpu2d_set_layer_capture(bool enabled) {
             }
         }
     }
-    g_layer_capture = enabled;
+    g_layer_capture = engines;
     g_layer_valid = false;
 }
 
-bool nds_gpu2d_layer_capture() { return g_layer_capture; }
+uint8_t nds_gpu2d_layer_capture() { return g_layer_capture; }
 
 bool nds_gpu2d_layers(NdsGpu2dLayers* out) {
     if (!out || !g_layer_capture || !g_layer_valid) return false;

@@ -42,7 +42,9 @@ uint32_t host_write(uint32_t addr, const void* src, uint32_t len) {
 
 uint64_t host_frame() { return g_frame; }
 
-void host_capture_layers(int enable) { nds_gpu2d_set_layer_capture(enable != 0); }
+void host_capture_layers(int engines) {
+    nds_gpu2d_set_layer_capture(static_cast<uint8_t>(engines & 3));
+}
 
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
