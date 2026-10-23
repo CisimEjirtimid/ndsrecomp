@@ -335,7 +335,8 @@ melonDS device models:
   `runner/src/frontend.cpp`, and `oracle/patches/` are derivative works of
   melonDS and are under **GPL-3.0-or-later**; see [`LICENSE-GPL`](LICENSE-GPL).
 
-The `arm-recomp-core` and `freebios` submodules carry their own licenses.
+The `arm-recomp-core`, `freebios` and `recomp-ui` (the runner's in-game menu,
+`external/recomp-ui`) submodules carry their own licenses.
 
 **If you distribute a build:** `nds_runner` and `ndsref` binaries are
 GPL-3.0-or-later combined works. Ship [`LICENSE-GPL`](LICENSE-GPL) with them
