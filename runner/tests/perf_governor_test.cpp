@@ -140,16 +140,44 @@ void test_streak_is_broken_by_one_frame() {
     CHECK(nds_perf_governor_update(&state, over_emu()));
     CHECK(state.stage == 1);
 
-    // Same on the restore side.
+    // On the restore side a neutral frame only pauses the count...
     feed(state, under(), 179);
     CHECK(state.under_frames == 179);
     CHECK(!nds_perf_governor_update(&state, neutral()));
-    CHECK(state.under_frames == 0);
+    CHECK(state.under_frames == 179);
     CHECK(state.stage == 1);
+    CHECK(nds_perf_governor_update(&state, under()));
+    CHECK(state.stage == 0);
+
+    // ... while an over-budget frame resets it.
+    feed(state, over_emu(), 29);
+    CHECK(nds_perf_governor_update(&state, over_emu()));
+    CHECK(state.stage == 1);
+    feed(state, under(), 179);
+    CHECK(!nds_perf_governor_update(&state, over_emu()));
+    CHECK(state.under_frames == 0);
     feed(state, under(), 179);
     CHECK(state.stage == 1);
     CHECK(nds_perf_governor_update(&state, under()));
     CHECK(state.stage == 0);
+}
+
+// Regular heavier (dead-zone) frames between recovered ones, as in a real
+// game, must not keep a stepped-down session from coming back.
+void test_recovery_through_jitter() {
+    NdsPerfGovernorConfig cfg{};
+    NdsPerfGovernorState state{};
+    nds_perf_governor_init(&state, NdsPerfGovernorMode::Auto, cfg);
+    for (int stage = 1; stage <= 2; ++stage) {
+        feed(state, over_emu(), 29);
+        CHECK(nds_perf_governor_update(&state, over_emu()));
+    }
+    CHECK(state.stage == 2);
+    for (int i = 0; i < 2 * 180 && state.stage == 2; ++i) {
+        nds_perf_governor_update(&state, under());
+        nds_perf_governor_update(&state, neutral());
+    }
+    CHECK(state.stage == 1);
 }
 
 // (2) The dead zone is neutral in both directions.
@@ -162,7 +190,7 @@ void test_dead_zone() {
     CHECK(state.under_frames == 0);
 
     // A drain between max_over_drain_ms and min_recovery_drain_ms is neutral
-    // even when emu time is comfortable.
+    // even when emu time is comfortable: it does not count toward recovery.
     NdsPerfGovernorSample s = under();
     s.drain_ms = 1.0;
     feed(state, s, 50);
@@ -504,6 +532,7 @@ int main() {
     test_ladder();
     test_streak_is_broken_by_one_frame();
     test_dead_zone();
+    test_recovery_through_jitter();
     test_clauses_in_isolation();
     test_underruns_clause();
     test_clamped_at_stage2();

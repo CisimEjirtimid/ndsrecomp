@@ -144,10 +144,15 @@ bool nds_perf_governor_update(NdsPerfGovernorState* state,
             state->under_frames + 1u, cfg.restore_frames);
         state->over_frames = 0;
     } else {
-        // Dead zone: a single interrupting frame breaks the streak, which is
-        // what makes engage_frames mean "sustained".
+        // Dead zone. It breaks an over-budget streak, which is what makes
+        // engage_frames mean "sustained". It only pauses a recovery count:
+        // games have regular heavier frames that are not over budget, and
+        // demanding restore_frames of them in a row meant a session that
+        // stepped down on a load spike never came back (measured: Hotel
+        // Dusk averaged 11.8 ms emulation with 4.3 ms of pacing headroom at
+        // stage 2 for 70k frames without ever completing a streak). An
+        // over-budget frame still resets it.
         state->over_frames = 0;
-        state->under_frames = 0;
     }
 
     if (over_budget && state->over_frames >= cfg.engage_frames &&

@@ -24,7 +24,10 @@ enum class NdsPerfGovernorReason : uint8_t {
 };
 
 struct NdsPerfGovernorConfig {
+    // Consecutive over-budget frames that step a stage down.
     uint32_t engage_frames = 30;
+    // Recovered frames that step a stage back up. Neutral (dead-zone) frames
+    // pause this count; an over-budget frame resets it.
     uint32_t restore_frames = 180;
     double over_budget_margin_ms = 0.5;
     double under_budget_margin_ms = 2.0;
