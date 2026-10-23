@@ -117,6 +117,11 @@ public:
     [[nodiscard]] u32 GetRenderWidth() const noexcept { return RenderWidth; }
     void SetGuestWideProjection(bool enable) noexcept;
     [[nodiscard]] bool GetGuestWideProjection() const noexcept { return GuestWideProjection; }
+    // Host-only view roll (title presentation layers): turn clip space by
+    // `quarters` quarter turns and spread a square viewport across the whole
+    // RenderWidth band with square pixels. 0 = off.
+    void SetHostViewRoll(int quarters) noexcept { HostViewRoll = quarters & 3; }
+    [[nodiscard]] int GetHostViewRoll() const noexcept { return HostViewRoll; }
     [[nodiscard]] bool RenderFrameHasPerspectiveProjection() const noexcept;
     u32* GetLine(int line) noexcept;
     const u32* GetAttrLine(int line) noexcept;
@@ -205,6 +210,14 @@ private:
     // already spans RenderWidth, so the host must not rescale clip X on top of
     // it, and every viewport (full or partial) maps linearly across the band.
     bool GuestWideProjection = false;
+    // See SetHostViewRoll. Applies only to square viewports with RenderWidth
+    // above 256, where it replaces the full-viewport clip X widening.
+    int HostViewRoll = 0;
+    [[nodiscard]] bool HostViewRollActive() const noexcept
+    {
+        return HostViewRoll != 0 && RenderWidth > 256 &&
+               Viewport[4] == Viewport[5] && Viewport[4] != 0;
+    }
 
 public:
     FIFO<CmdFIFOEntry, 256> CmdFIFO {};

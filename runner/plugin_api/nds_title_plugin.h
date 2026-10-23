@@ -83,6 +83,12 @@ typedef struct NdsTitleHost {
      * are empty. Returns 0 when nothing is available. */
     void (*capture_layers)(int engines);
     int (*layers)(NdsTitleLayers* out);
+    /* Turn the 3D view by `quarters` quarter turns (0 = off) and spread a
+     * square guest viewport across the plugin's wide_3d_width with square
+     * pixels: a title drawn for a sideways DS renders upright and wide. Host
+     * only; the 2D engine (and display capture) still consumes the centre of
+     * the raster. Applies to vertices submitted after the call. */
+    void (*set_view_roll)(int quarters);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices
@@ -110,7 +116,11 @@ enum {
     NDS_DRAW_BOTTOM_SCREEN = 1,
     NDS_DRAW_LAYER_FIRST = 2 /* + engine * NDS_LAYER_COUNT + layer */
 };
-#define NDS_DRAW_LAYER(engine, layer)     (NDS_DRAW_LAYER_FIRST + (engine) * NDS_LAYER_COUNT + (layer))
+#define NDS_DRAW_LAYER(engine, layer) \
+    (NDS_DRAW_LAYER_FIRST + (engine) * NDS_LAYER_COUNT + (layer))
+/* The host-only wide 3D image (the plugin's wide_3d_width x 192 in DS
+ * pixels), e.g. the view turned by host->set_view_roll. */
+#define NDS_DRAW_3D (NDS_DRAW_LAYER_FIRST + 2 * NDS_LAYER_COUNT)
 typedef struct NdsTitleDraw {
     int width, height; /* canvas size: the window's render output, pixels */
     /* How the frontend's layout turns the DS screens (the book layouts turn
@@ -152,6 +162,9 @@ typedef struct NdsTitlePlugin {
      * for "not on the touch screen". May be NULL (the mouse then never
      * touches while the plugin presents). */
     int (*pointer)(float canvas_x, float canvas_y, uint16_t* x, uint16_t* y);
+    /* Width of the host 3D raster the plugin needs (256..448, a multiple of
+     * 64 for the accelerated renderer), fixed at startup; 0 = native. */
+    uint16_t wide_3d_width;
 } NdsTitlePlugin;
 
 /* Exported by the plugin library. */

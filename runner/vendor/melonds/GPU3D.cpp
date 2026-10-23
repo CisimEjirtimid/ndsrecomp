@@ -1148,7 +1148,13 @@ void GPU3D::SubmitPolygon() noexcept
         // thus, if W is greater than 0xFFFF, some precision is sacrificed
         // to make the numbers fit into the divider
         u32 viewport_width, viewport_x;
-        if (GuestWideProjection)
+        if (HostViewRollActive())
+        {
+            // SubmitVertex already scaled the turned clip X to the band.
+            viewport_x = 0;
+            viewport_width = RenderWidth;
+        }
+        else if (GuestWideProjection)
         {
             // Guest screen X 0..256 already means the whole RenderWidth band,
             // so every viewport maps linearly onto it. The end is derived from
@@ -1429,7 +1435,19 @@ void GPU3D::SubmitVertex() noexcept
     // depth, guest matrices, and hardware registers remain unchanged.
     // Skipped under GuestWideProjection: the guest's own frustum is already
     // band-wide there, and applying both widenings compounds the FOV.
-    if (!GuestWideProjection &&
+    if (HostViewRollActive())
+    {
+        // Turn the view a quarter (or three quarters) turn in clip space;
+        // the winding is preserved. Then keep the pixels square: clip X
+        // spans the whole band, one viewport height per two clip units.
+        const s32 x = vertextrans->Position[0], y = vertextrans->Position[1];
+        const s32 tx = HostViewRoll == 1 ? -y : HostViewRoll == 3 ? y : -x;
+        const s32 ty = HostViewRoll == 1 ? x : HostViewRoll == 3 ? -x : -y;
+        vertextrans->Position[0] = static_cast<s32>(
+            (static_cast<s64>(tx) * Viewport[5]) / RenderWidth);
+        vertextrans->Position[1] = ty;
+    }
+    else if (!GuestWideProjection &&
         RenderWidth > 256 && Viewport[0] == 0 && Viewport[4] == 256)
         vertextrans->Position[0] = static_cast<s32>(
             (static_cast<s64>(vertextrans->Position[0]) * 256) /

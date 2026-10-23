@@ -4,6 +4,7 @@
 
 #include "state.h"
 #include "gpu2d.h"
+#include "gpu3d.h"
 #include "io.h"
 #include "runtime_arm.h"
 #include "nds_title_plugin.h"
@@ -47,6 +48,8 @@ void host_capture_layers(int engines) {
     nds_gpu2d_set_layer_capture(static_cast<uint8_t>(engines & 3));
 }
 
+void host_set_view_roll(int quarters) { nds_gpu3d_set_view_roll(quarters); }
+
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
     NdsGpu2dLayers l{};
@@ -70,7 +73,7 @@ void host_log(const char* message) {
 
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
                             host_log, host_write, host_capture_layers,
-                            host_layers};
+                            host_layers, host_set_view_roll};
 
 }  // namespace
 
@@ -139,6 +142,10 @@ bool nds_title_plugin_present(const NdsTitleDraw* draw) {
     g_presented = g_plugin && g_plugin->present && draw &&
                   g_plugin->present(&kHost, draw) != 0;
     return g_presented;
+}
+
+uint16_t nds_title_plugin_wide_3d_width() {
+    return g_plugin ? g_plugin->wide_3d_width : 0;
 }
 
 bool nds_title_plugin_presented() { return g_plugin && g_presented; }
