@@ -2179,6 +2179,11 @@ struct PluginCanvas {
     SDL_Renderer* renderer = nullptr;
     SDL_Texture* layers[2][NDS_LAYER_COUNT]{};
     uint64_t uploaded[2][NDS_LAYER_COUNT]{};
+    // NDS_DRAW_3D: uploaded once per presented frame, on first use.
+    SDL_Texture* wide3d = nullptr;
+    int wide3d_w = 0, wide3d_h = 0;
+    bool wide3d_fresh = false;
+    std::vector<uint32_t> wide3d_pixels;
     NdsGpu2dLayers frame{};
     bool have_frame = false;
 };
@@ -2190,6 +2195,7 @@ void plugin_canvas_destroy() {
             if (texture) SDL_DestroyTexture(texture);
             texture = nullptr;
         }
+    if (g_canvas.wide3d) SDL_DestroyTexture(g_canvas.wide3d);
     g_canvas = PluginCanvas{};
 }
 
@@ -2215,6 +2221,34 @@ SDL_Texture* plugin_source(int source, int* w, int* h) {
         // HD display capture's image when this frame has one.
         return p->screen_source[source] ? p->screen_source[source]
                                         : p->textures[source];
+    }
+    if (source == NDS_DRAW_3D) {
+        if (!g_canvas.wide3d_fresh) {
+            uint32_t iw = 0, ih = 0;
+            if (!nds_gpu3d_wide_image(&g_canvas.wide3d_pixels, &iw, &ih))
+                return nullptr;
+            if (g_canvas.wide3d && (g_canvas.wide3d_w != static_cast<int>(iw) ||
+                                    g_canvas.wide3d_h != static_cast<int>(ih))) {
+                SDL_DestroyTexture(g_canvas.wide3d);
+                g_canvas.wide3d = nullptr;
+            }
+            if (!g_canvas.wide3d) {
+                g_canvas.wide3d = SDL_CreateTexture(
+                    g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_STREAMING, static_cast<int>(iw),
+                    static_cast<int>(ih));
+                if (!g_canvas.wide3d) return nullptr;
+                g_canvas.wide3d_w = static_cast<int>(iw);
+                g_canvas.wide3d_h = static_cast<int>(ih);
+            }
+            SDL_UpdateTexture(g_canvas.wide3d, nullptr,
+                              g_canvas.wide3d_pixels.data(),
+                              static_cast<int>(iw * sizeof(uint32_t)));
+            g_canvas.wide3d_fresh = true;
+        }
+        *w = nds_gpu3d_output_width();
+        *h = kScreenHeight;
+        return g_canvas.wide3d;
     }
     const int index = source - NDS_DRAW_LAYER_FIRST;
     if (index < 0 || index >= 2 * NDS_LAYER_COUNT || !g_canvas.have_frame)
@@ -2333,6 +2367,7 @@ bool present_through_plugin(FrontendPresentation& presentation,
     g_canvas.presentation = &presentation;
     g_canvas.renderer = renderer;
     g_canvas.have_frame = nds_gpu2d_layers(&g_canvas.frame);
+    g_canvas.wide3d_fresh = false;
     const NdsTitleDraw draw{output_w, output_h,
                             static_cast<float>(screen_degrees),
                             plugin_source_size, plugin_draw, plugin_fill};
@@ -2611,9 +2646,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         static_cast<unsigned>(options.supersampling),
         static_cast<unsigned>(options.antialiasing),
         static_cast<unsigned>(options.internal_resolution));
-    const uint16_t output_width = static_cast<uint16_t>(std::max(
-        presentation.screen_widths[0],
-        presentation.screen_widths[1]));
+    // A title plugin may need a wider host 3D raster (its wide_3d_width).
+    const uint16_t output_width = static_cast<uint16_t>(std::max<int>(
+        std::max(presentation.screen_widths[0], presentation.screen_widths[1]),
+        nds_title_plugin_wide_3d_width()));
     if (!nds_gpu3d_set_output_width(output_width)) {
         std::fprintf(stderr,
                      "[sdl] adaptive 3D width %u is unavailable\n",

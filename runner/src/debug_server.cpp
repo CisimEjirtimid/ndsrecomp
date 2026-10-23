@@ -1173,6 +1173,30 @@ std::string handle(const std::string& line) {
         out += "]}";
         return out;
     }
+    if (cmd == "view_roll") {
+        // {"cmd":"view_roll","quarters":1,"width":384}: host-only 3D view
+        // roll on a widened raster (software renderer: any time).
+        const uint64_t width = json_u64(line, "width", 0);
+        if (width && !nds_gpu3d_set_output_width(static_cast<uint16_t>(width)))
+            return "{\"error\":\"width unavailable\"}";
+        nds_gpu3d_set_view_roll(static_cast<int>(json_u64(line, "quarters", 0)));
+        return "{\"quarters\":" + std::to_string(nds_gpu3d_view_roll()) +
+               ",\"width\":" + std::to_string(nds_gpu3d_output_width()) + "}";
+    }
+
+    if (cmd == "wide_3d") {
+        // The whole widened 3D raster (wide_line), 0xAA RRGGBB-ish native
+        // words (RGB6 at bits 0/8/16, alpha5 at 24), row-major.
+        const uint32_t width = nds_gpu3d_output_width();
+        std::string hex;
+        for (int y = 0; y < 192; ++y) {
+            const uint32_t* row = nds_gpu3d_wide_line(y);
+            if (!row) return "{\"error\":\"no wide line\"}";
+            append_hex(hex, reinterpret_cast<const uint8_t*>(row), width * 4u);
+        }
+        return "{\"width\":" + std::to_string(width) + ",\"hex\":\"" + hex + "\"}";
+    }
+
     if (cmd == "layer_capture") {
         // {"cmd":"layer_capture","engines":3}: bit 0 engine A, bit 1 B.
         nds_gpu2d_set_layer_capture(

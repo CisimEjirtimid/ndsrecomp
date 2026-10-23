@@ -28,6 +28,8 @@ void nds_title_plugin_vblank();
 struct NdsTitleDraw;
 // Frontend presentation: true when the plugin drew the whole canvas.
 bool nds_title_plugin_present(const NdsTitleDraw* draw);
+// The host 3D raster width the plugin needs (0 = native).
+uint16_t nds_title_plugin_wide_3d_width();
 // Whether the plugin drew the last presented frame (it then owns the mouse).
 bool nds_title_plugin_presented();
 // After a plugin-presented frame: -1 = not handled (frontend mapping), 0 = no
