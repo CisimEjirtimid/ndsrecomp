@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 // Bridge to the vendored melonDS GPU3D geometry/rasterizer device model
 // (runner/vendor/melonds/, GPL-3.0-or-later — see THIRD_PARTY_ATTRIBUTION.md).
@@ -76,6 +77,11 @@ uint32_t nds_gpu3d_compute_output_texture_hires();
 // active at scale > 1. It holds the frame the 2D engine consumed until
 // VCount 215 rasterizes the next one.
 const uint8_t* nds_gpu3d_read_hires(uint32_t* width, uint32_t* height);
+// The same copy into a caller-owned buffer, for consumers that must not share
+// the buffer above with the HD capture worker.
+#define NDS_GPU3D_HAVE_READ_HIRES_INTO 1
+bool nds_gpu3d_read_hires_into(std::vector<uint8_t>* out, uint32_t* width,
+                               uint32_t* height);
 // Queue that copy asynchronously after every rasterization (VCount 215), so
 // the read at the next VBlank finds it complete instead of stalling.
 void nds_gpu3d_set_hires_readback(bool enabled);
