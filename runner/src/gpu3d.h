@@ -179,10 +179,10 @@ uint16_t nds_gpu3d_output_width();
 void nds_gpu3d_set_view_roll(int quarters);
 int nds_gpu3d_view_roll();
 // The host-only wide 3D image of the last rasterized frame, output width x
-// 192 (times the internal scale where a hi-res surface is available),
-// 0xFFRRGGBB. Copies into `out`; false when unavailable.
-bool nds_gpu3d_wide_image(std::vector<uint32_t>* out, uint32_t* width,
-                          uint32_t* height);
+// 192 (times the internal scale where a hi-res surface is available), as
+// 0xAARRGGBB words whose alpha is the 3D alpha (present it opaque). Valid
+// until the next call; nullptr when unavailable.
+const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height);
 void nds_gpu3d_set_guest_wide_projection(bool enabled);
 bool nds_gpu3d_guest_wide_projection();
 bool nds_gpu3d_projection_has_perspective();
