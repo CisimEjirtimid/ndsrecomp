@@ -1772,10 +1772,15 @@ void hd_capture_end_frame(uint32_t buffer) {
         g_hdcap_stats.readback_ns += static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - readback_start).count());
-        if (hi && hi_width == 256u * scale && hi_height == 192u * scale) {
+        // A widened 3D surface (adaptive widescreen, title layers) holds
+        // the native 256 columns in its centre, which is what was captured.
+        if (hi && hi_width >= 256u * scale && hi_height == 192u * scale &&
+            ((hi_width - 256u * scale) % (2u * scale)) == 0u) {
+            const uint8_t* const centre =
+                hi + ((hi_width - 256u * scale) / 2u) * 4u;
             // The image shows the shadow as the previous frame left it (what
             // the guest displays this frame); only then does it advance.
-            g_hdcap_worker.submit([buffer, &f, hi, hi_width] {
+            g_hdcap_worker.submit([buffer, &f, hi = centre, hi_width] {
                 const auto job_start = std::chrono::steady_clock::now();
                 hd_capture_make_image(buffer, f);
                 hd_capture_advance(f, hi, hi_width);
