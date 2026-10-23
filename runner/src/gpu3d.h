@@ -190,6 +190,9 @@ bool nds_gpu3d_view_roll_skip();
 // without it (passes the title did not roll) keep the previous image. Valid
 // until the next call; nullptr when unavailable.
 const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height);
+// Which rendered frame the last nds_gpu3d_wide_image result came from: the
+// same value means the same (held) image.
+uint64_t nds_gpu3d_wide_image_serial();
 // Whether the last rasterized frame was submitted under the view roll.
 bool nds_gpu3d_last_render_rolled();
 void nds_gpu3d_set_guest_wide_projection(bool enabled);

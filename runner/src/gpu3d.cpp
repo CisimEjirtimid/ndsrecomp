@@ -1421,6 +1421,11 @@ void nds_gpu3d_set_view_roll_skip(bool skip) {
 
 bool nds_gpu3d_view_roll_skip() { return g_nds.GPU.GPU3D.GetHostViewRollSkip(); }
 
+namespace {
+// The rendered frame the last wide image came from (GPU3D render serial).
+uint64_t g_wide_image_serial = 0;
+}  // namespace
+
 const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
     // While a roll is requested, only rolled frames replace the image: a
     // title that shares the 3D engine between passes (another screen, an
@@ -1432,6 +1437,7 @@ const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
         held = image;
         held_w = w;
         held_h = h;
+        g_wide_image_serial = g_nds.GPU.GPU3D.GetRenderSerial();
         if (width) *width = w;
         if (height) *height = h;
         return image;
@@ -1467,6 +1473,8 @@ const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
     }
     return keep(native.data(), w, 192u);
 }
+
+uint64_t nds_gpu3d_wide_image_serial() { return g_wide_image_serial; }
 
 bool nds_gpu3d_last_render_rolled() {
     return g_nds.GPU.GPU3D.LastRenderHostRolled();

@@ -131,6 +131,11 @@ enum {
 /* The host-only wide 3D image (the plugin's wide_3d_width x 192 in DS
  * pixels), e.g. the view turned by host->set_view_roll. */
 #define NDS_DRAW_3D (NDS_DRAW_LAYER_FIRST + 2 * NDS_LAYER_COUNT)
+/* NDS_DRAW_3D averaged 50/50 with the frame rendered before it: what a game
+ * that blends consecutive frames through display capture shows (DS temporal
+ * anti-aliasing jitters the camera by a fraction of a pixel every other
+ * frame and blends; drawn raw, the view shimmers). */
+#define NDS_DRAW_3D_BLEND (NDS_DRAW_3D + 1)
 /* NdsTitleDraw.draw flags. */
 #define NDS_DRAW_SMOOTH 1
 #define NDS_DRAW_KEEP 2
