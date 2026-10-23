@@ -2183,7 +2183,9 @@ struct PluginCanvas {
     SDL_Texture* wide3d = nullptr;
     int wide3d_w = 0, wide3d_h = 0;
     bool wide3d_fresh = false;
-    std::vector<uint32_t> wide3d_pixels;
+    // HD display capture is suspended while the plugin shows the wide 3D
+    // image instead: nothing presents its result.
+    bool hd_capture_suspended = false;
     NdsGpu2dLayers frame{};
     bool have_frame = false;
 };
@@ -2225,8 +2227,8 @@ SDL_Texture* plugin_source(int source, int* w, int* h) {
     if (source == NDS_DRAW_3D) {
         if (!g_canvas.wide3d_fresh) {
             uint32_t iw = 0, ih = 0;
-            if (!nds_gpu3d_wide_image(&g_canvas.wide3d_pixels, &iw, &ih))
-                return nullptr;
+            const uint32_t* const pixels = nds_gpu3d_wide_image(&iw, &ih);
+            if (!pixels) return nullptr;
             if (g_canvas.wide3d && (g_canvas.wide3d_w != static_cast<int>(iw) ||
                                     g_canvas.wide3d_h != static_cast<int>(ih))) {
                 SDL_DestroyTexture(g_canvas.wide3d);
@@ -2238,11 +2240,12 @@ SDL_Texture* plugin_source(int source, int* w, int* h) {
                     SDL_TEXTUREACCESS_STREAMING, static_cast<int>(iw),
                     static_cast<int>(ih));
                 if (!g_canvas.wide3d) return nullptr;
+                // The words carry the 3D alpha; the view is opaque.
+                SDL_SetTextureBlendMode(g_canvas.wide3d, SDL_BLENDMODE_NONE);
                 g_canvas.wide3d_w = static_cast<int>(iw);
                 g_canvas.wide3d_h = static_cast<int>(ih);
             }
-            SDL_UpdateTexture(g_canvas.wide3d, nullptr,
-                              g_canvas.wide3d_pixels.data(),
+            SDL_UpdateTexture(g_canvas.wide3d, nullptr, pixels,
                               static_cast<int>(iw * sizeof(uint32_t)));
             g_canvas.wide3d_fresh = true;
         }
@@ -2341,6 +2344,21 @@ void render_output_size(SDL_Renderer* renderer, int* w, int* h) {
 #endif
 }
 
+// While a plugin shows the wide 3D image, HD display capture's result is
+// never presented: stop paying for it, but keep the asynchronous hi-res
+// readback the wide image is read from.
+void suspend_hd_capture_for_wide_3d(bool suspend) {
+#if defined(NDS_GPU3D_HAVE_READ_HIRES_INTO)
+    if (suspend == g_canvas.hd_capture_suspended) return;
+    const bool hires = nds_gpu3d_compute_output_texture_hires() != 0u;
+    nds_gpu2d_set_hd_capture(!suspend && hires);
+    nds_gpu3d_set_hires_readback(hires);
+    g_canvas.hd_capture_suspended = suspend;
+#else
+    (void)suspend;
+#endif
+}
+
 // Lets the title plugin draw the single window. Its canvas is the window's
 // render output in pixels, so a remaster layout can use any window shape;
 // mouse events convert through the transform the last frame used, so they
@@ -2374,7 +2392,9 @@ bool present_through_plugin(FrontendPresentation& presentation,
     (void)width;
     (void)height;
     // The caller re-applies its logical transform when this declines.
-    return nds_title_plugin_present(&draw);
+    const bool drew = nds_title_plugin_present(&draw);
+    suspend_hd_capture_for_wide_3d(drew && g_canvas.wide3d_fresh);
+    return drew;
 }
 
 PresentationTicks present_screens(FrontendPresentation& presentation,

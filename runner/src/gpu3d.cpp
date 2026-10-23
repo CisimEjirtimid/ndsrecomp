@@ -1415,30 +1415,26 @@ void nds_gpu3d_set_view_roll(int quarters) {
 
 int nds_gpu3d_view_roll() { return g_nds.GPU.GPU3D.GetHostViewRoll(); }
 
-bool nds_gpu3d_wide_image(std::vector<uint32_t>* out, uint32_t* width,
-                          uint32_t* height) {
-    if (!out) return false;
+const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
 #if defined(NDS_GPU3D_HAVE_READ_HIRES_INTO)
     // The hi-res surface where an accelerated renderer has one: its bytes
-    // are B, G, R, A, i.e. 0xAARRGGBB words; force them opaque.
+    // are B, G, R, A, i.e. 0xAARRGGBB words.
     static std::vector<uint8_t> hires;
     uint32_t hw = 0, hh = 0;
     if (nds_gpu3d_read_hires_into(&hires, &hw, &hh)) {
-        out->resize(static_cast<size_t>(hw) * hh);
-        std::memcpy(out->data(), hires.data(), out->size() * 4u);
-        for (uint32_t& p : *out) p |= 0xFF000000u;
         if (width) *width = hw;
         if (height) *height = hh;
-        return true;
+        return reinterpret_cast<const uint32_t*>(hires.data());
     }
 #endif
+    static std::vector<uint32_t> native;
     const uint32_t w = nds_gpu3d_output_width();
-    out->resize(static_cast<size_t>(w) * 192u);
+    native.resize(static_cast<size_t>(w) * 192u);
     auto c8 = [](uint32_t v) { return (v << 2) | (v >> 4); };
     for (int y = 0; y < 192; ++y) {
         const uint32_t* row = nds_gpu3d_wide_line(y);
-        if (!row) return false;
-        uint32_t* dst = out->data() + static_cast<size_t>(y) * w;
+        if (!row) return nullptr;
+        uint32_t* dst = native.data() + static_cast<size_t>(y) * w;
         for (uint32_t x = 0; x < w; ++x) {
             const uint32_t c = row[x];
             dst[x] = 0xFF000000u | (c8(c & 0x3Fu) << 16) |
@@ -1447,7 +1443,7 @@ bool nds_gpu3d_wide_image(std::vector<uint32_t>* out, uint32_t* width,
     }
     if (width) *width = w;
     if (height) *height = 192u;
-    return true;
+    return native.data();
 }
 
 void nds_gpu3d_set_guest_wide_projection(bool enabled) {
