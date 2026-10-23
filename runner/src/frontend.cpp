@@ -2183,6 +2183,18 @@ struct PluginCanvas {
     SDL_Texture* wide3d = nullptr;
     int wide3d_w = 0, wide3d_h = 0;
     bool wide3d_fresh = false;
+    // NDS_DRAW_3D_BLEND: the current and previous rendered frames (CPU
+    // copies, kept only while the plugin draws this source) and their mix.
+    SDL_Texture* wide3d_blend = nullptr;
+    int wide3d_blend_w = 0, wide3d_blend_h = 0;
+    bool wide3d_blend_fresh = false;
+    std::vector<uint32_t> wide_cur, wide_prev, wide_mix;
+    uint64_t wide_cur_serial = 0;
+    bool wide_have_prev = false;
+    // The wide image fetched for this presented frame (one read per frame).
+    const uint32_t* wide_pixels = nullptr;
+    uint32_t wide_w = 0, wide_h = 0;
+    bool wide_fetched = false;
     // HD display capture is suspended while the plugin shows the wide 3D
     // image instead: nothing presents its result.
     bool hd_capture_suspended = false;
@@ -2198,7 +2210,75 @@ void plugin_canvas_destroy() {
             texture = nullptr;
         }
     if (g_canvas.wide3d) SDL_DestroyTexture(g_canvas.wide3d);
+    if (g_canvas.wide3d_blend) SDL_DestroyTexture(g_canvas.wide3d_blend);
     g_canvas = PluginCanvas{};
+}
+
+// The wide 3D image for this presented frame, read once.
+const uint32_t* plugin_wide_image(uint32_t* w, uint32_t* h) {
+    if (!g_canvas.wide_fetched) {
+        g_canvas.wide_pixels =
+            nds_gpu3d_wide_image(&g_canvas.wide_w, &g_canvas.wide_h);
+        g_canvas.wide_fetched = true;
+    }
+    *w = g_canvas.wide_w;
+    *h = g_canvas.wide_h;
+    return g_canvas.wide_pixels;
+}
+
+// A streaming texture of the given size, replacing one of another size. The
+// words carry the 3D alpha; the view is opaque.
+SDL_Texture* wide_texture(SDL_Texture*& texture, int* tw, int* th, uint32_t w,
+                          uint32_t h) {
+    if (texture && (*tw != static_cast<int>(w) || *th != static_cast<int>(h))) {
+        SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+    if (!texture) {
+        texture = SDL_CreateTexture(g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING,
+                                    static_cast<int>(w), static_cast<int>(h));
+        if (!texture) return nullptr;
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+        *tw = static_cast<int>(w);
+        *th = static_cast<int>(h);
+    }
+    return texture;
+}
+
+// NDS_DRAW_3D_BLEND: the current frame averaged with the one rendered before
+// it, as a game's 50/50 display-capture blend shows them. The first frame
+// (or one after a size change) is shown alone.
+bool upload_wide_blend() {
+    uint32_t w = 0, h = 0;
+    const uint32_t* const pixels = plugin_wide_image(&w, &h);
+    if (!pixels) return false;
+    const size_t n = static_cast<size_t>(w) * h;
+    const uint64_t serial = nds_gpu3d_wide_image_serial();
+    if (serial != g_canvas.wide_cur_serial || g_canvas.wide_cur.size() != n) {
+        g_canvas.wide_have_prev = g_canvas.wide_cur.size() == n;
+        std::swap(g_canvas.wide_prev, g_canvas.wide_cur);
+        g_canvas.wide_cur.assign(pixels, pixels + n);
+        g_canvas.wide_cur_serial = serial;
+    }
+    const std::vector<uint32_t>* shown = &g_canvas.wide_cur;
+    if (g_canvas.wide_have_prev) {
+        g_canvas.wide_mix.resize(n);
+        const uint32_t* a = g_canvas.wide_cur.data();
+        const uint32_t* b = g_canvas.wide_prev.data();
+        uint32_t* out = g_canvas.wide_mix.data();
+        // Per byte floor((a + b) / 2), four channels at once.
+        for (size_t i = 0; i < n; ++i)
+            out[i] = (a[i] & b[i]) + (((a[i] ^ b[i]) >> 1) & 0x7F7F7F7Fu);
+        shown = &g_canvas.wide_mix;
+    }
+    SDL_Texture* const texture =
+        wide_texture(g_canvas.wide3d_blend, &g_canvas.wide3d_blend_w,
+                     &g_canvas.wide3d_blend_h, w, h);
+    if (!texture) return false;
+    SDL_UpdateTexture(texture, nullptr, shown->data(),
+                      static_cast<int>(w * sizeof(uint32_t)));
+    return true;
 }
 
 bool texture_size(SDL_Texture* texture, float* w, float* h) {
@@ -2229,24 +2309,11 @@ SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
     if (source == NDS_DRAW_3D) {
         if (!g_canvas.wide3d_fresh && !(keep && g_canvas.wide3d)) {
             uint32_t iw = 0, ih = 0;
-            const uint32_t* const pixels = nds_gpu3d_wide_image(&iw, &ih);
+            const uint32_t* const pixels = plugin_wide_image(&iw, &ih);
             if (!pixels) return nullptr;
-            if (g_canvas.wide3d && (g_canvas.wide3d_w != static_cast<int>(iw) ||
-                                    g_canvas.wide3d_h != static_cast<int>(ih))) {
-                SDL_DestroyTexture(g_canvas.wide3d);
-                g_canvas.wide3d = nullptr;
-            }
-            if (!g_canvas.wide3d) {
-                g_canvas.wide3d = SDL_CreateTexture(
-                    g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
-                    SDL_TEXTUREACCESS_STREAMING, static_cast<int>(iw),
-                    static_cast<int>(ih));
-                if (!g_canvas.wide3d) return nullptr;
-                // The words carry the 3D alpha; the view is opaque.
-                SDL_SetTextureBlendMode(g_canvas.wide3d, SDL_BLENDMODE_NONE);
-                g_canvas.wide3d_w = static_cast<int>(iw);
-                g_canvas.wide3d_h = static_cast<int>(ih);
-            }
+            if (!wide_texture(g_canvas.wide3d, &g_canvas.wide3d_w,
+                              &g_canvas.wide3d_h, iw, ih))
+                return nullptr;
             SDL_UpdateTexture(g_canvas.wide3d, nullptr, pixels,
                               static_cast<int>(iw * sizeof(uint32_t)));
             g_canvas.wide3d_fresh = true;
@@ -2254,6 +2321,16 @@ SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
         *w = nds_gpu3d_output_width();
         *h = kScreenHeight;
         return g_canvas.wide3d;
+    }
+    if (source == NDS_DRAW_3D_BLEND) {
+        if (!g_canvas.wide3d_blend_fresh &&
+            !(keep && g_canvas.wide3d_blend)) {
+            if (!upload_wide_blend()) return nullptr;
+            g_canvas.wide3d_blend_fresh = true;
+        }
+        *w = nds_gpu3d_output_width();
+        *h = kScreenHeight;
+        return g_canvas.wide3d_blend;
     }
     const int index = source - NDS_DRAW_LAYER_FIRST;
     if (index < 0 || index >= 2 * NDS_LAYER_COUNT || !g_canvas.have_frame)
@@ -2391,6 +2468,8 @@ bool present_through_plugin(FrontendPresentation& presentation,
     g_canvas.renderer = renderer;
     g_canvas.have_frame = nds_gpu2d_layers(&g_canvas.frame);
     g_canvas.wide3d_fresh = false;
+    g_canvas.wide3d_blend_fresh = false;
+    g_canvas.wide_fetched = false;
     const NdsTitleDraw draw{output_w, output_h,
                             static_cast<float>(screen_degrees),
                             plugin_source_size, plugin_draw, plugin_fill};
@@ -2398,7 +2477,8 @@ bool present_through_plugin(FrontendPresentation& presentation,
     (void)height;
     // The caller re-applies its logical transform when this declines.
     const bool drew = nds_title_plugin_present(&draw);
-    suspend_hd_capture_for_wide_3d(drew && g_canvas.wide3d_fresh);
+    suspend_hd_capture_for_wide_3d(
+        drew && (g_canvas.wide3d_fresh || g_canvas.wide3d_blend_fresh));
     return drew;
 }
 

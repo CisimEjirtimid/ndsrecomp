@@ -2635,6 +2635,7 @@ void GPU3D::VCount215(GPU& gpu) noexcept
 {
     // The frame rendered now is what the host's wide image shows until the
     // next one, so tag it here, not at the swap.
+    ++RenderSerial;
     RenderedHostRolled = RenderNumPolygons == 0 && RenderEmptyHostRolled;
     for (u32 i = 0; i < RenderNumPolygons; ++i)
     {

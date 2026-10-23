@@ -133,6 +133,9 @@ public:
     // under the view roll: a title that shares the 3D engine between passes
     // rolls only some of them, and the host keeps showing the last one.
     [[nodiscard]] bool LastRenderHostRolled() const noexcept { return RenderedHostRolled; }
+    // Host only: counts frames rendered (VCount 215), to tell a new image
+    // from the same one read again.
+    [[nodiscard]] u64 GetRenderSerial() const noexcept { return RenderSerial; }
     [[nodiscard]] bool RenderFrameHasPerspectiveProjection() const noexcept;
     u32* GetLine(int line) noexcept;
     const u32* GetAttrLine(int line) noexcept;
@@ -227,6 +230,7 @@ private:
     bool HostViewRollSkip = false;
     bool RenderEmptyHostRolled = false;  // swapped in empty under the roll
     bool RenderedHostRolled = false;
+    u64 RenderSerial = 0;
     [[nodiscard]] bool HostViewRollActive() const noexcept
     {
         return HostViewRoll != 0 && !HostViewRollSkip && RenderWidth > 256 &&
