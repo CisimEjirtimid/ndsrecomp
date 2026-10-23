@@ -2259,8 +2259,13 @@ void plugin_draw(int source, const float* src, const float* dst, float degrees,
     const float sx = tw / static_cast<float>(sw), sy = th / static_cast<float>(sh);
     const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
     SDL_SetTextureAlphaMod(texture, a);
-    if (smooth) set_texture_scale_linear(texture);
-    else set_texture_scale_nearest(texture);
+#if defined(NDS_HAVE_SDL3)
+    SDL_SetTextureScaleMode(texture, smooth ? SDL_SCALEMODE_LINEAR
+                                            : SDL_SCALEMODE_NEAREST);
+#else
+    SDL_SetTextureScaleMode(texture, smooth ? SDL_ScaleModeLinear
+                                            : SDL_ScaleModeNearest);
+#endif
 #if defined(NDS_HAVE_SDL3)
     SDL_FRect s{0.0f, 0.0f, tw, th};
     if (src) s = SDL_FRect{src[0] * sx, src[1] * sy, src[2] * sx, src[3] * sy};
