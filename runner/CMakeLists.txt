@@ -396,15 +396,26 @@ if(NOT MSVC)
     target_compile_options(slirp PRIVATE -w)
 endif()
 
+# recomp-ui (the runner's in-game menu) is the external/recomp-ui submodule,
+# pinned with the framework. RECOMP_UI_ROOT or -DNDS_RECOMP_UI_ROOT override
+# it; a sibling checkout next to this repository still works for older
+# layouts.
 if(DEFINED ENV{RECOMP_UI_ROOT})
     set(NDS_RECOMP_UI_ROOT_DEFAULT "$ENV{RECOMP_UI_ROOT}")
-elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../recomp-ui/src/recomp_runtime_ui.h")
-    set(NDS_RECOMP_UI_ROOT_DEFAULT "${CMAKE_CURRENT_LIST_DIR}/../../../recomp-ui")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../external/recomp-ui/src/recomp_runtime_ui.h")
+    set(NDS_RECOMP_UI_ROOT_DEFAULT "${CMAKE_CURRENT_LIST_DIR}/../external/recomp-ui")
+elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../recomp-ui/src/recomp_runtime_ui.h")
+    set(NDS_RECOMP_UI_ROOT_DEFAULT "${CMAKE_CURRENT_LIST_DIR}/../../recomp-ui")
 else()
-    set(NDS_RECOMP_UI_ROOT_DEFAULT "F:/Projects/recomp-ui")
+    set(NDS_RECOMP_UI_ROOT_DEFAULT "")
 endif()
 set(NDS_RECOMP_UI_ROOT "${NDS_RECOMP_UI_ROOT_DEFAULT}" CACHE PATH
     "Path to the shared recomp-ui checkout for the runner in-game menu")
+if(NOT EXISTS "${NDS_RECOMP_UI_ROOT}/src/recomp_runtime_ui.h")
+    message(FATAL_ERROR
+        "recomp-ui not found (NDS_RECOMP_UI_ROOT='${NDS_RECOMP_UI_ROOT}'): "
+        "run `git submodule update --init external/recomp-ui`")
+endif()
 
 # The runner: runtime ABI + DS bus + CP15 + driver.
 # The portable ARMv4T/v5TE core (decoders + IR + the Tier-3 interpreter).
