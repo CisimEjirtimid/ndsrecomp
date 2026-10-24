@@ -25,6 +25,14 @@ void nds_set_screen_dpad(uint16_t pressed);
 // until the next VBlank) / buttons (NDS_MOUSE_*), for NdsTitleInput.
 void nds_title_plugin_latch_sticks(float lx, float ly, float rx, float ry);
 void nds_title_plugin_latch_mouse(float dx, float dy, uint8_t buttons);
+// The mouse position in canvas pixels (over = 0 once it leaves the window),
+// wheel notches (accumulated until the next VBlank), and host keys by SDL
+// scancode; release_keys clears them all (the runner's menu took the
+// keyboard).
+void nds_title_plugin_latch_pointer(float x, float y, bool over);
+void nds_title_plugin_latch_wheel(float notches);
+void nds_title_plugin_latch_key(int scancode, bool down);
+void nds_title_plugin_release_keys();
 
 // VBlank start, before the VBlank IRQ: run the plugin and apply its input.
 void nds_title_plugin_vblank();
