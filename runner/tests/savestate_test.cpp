@@ -1335,6 +1335,24 @@ bool spu_sections_roundtrip_replay_and_rollback() {
         expect(same_spu(actual, current),
                "capture cursor prevalidation failure leaves live state untouched");
 
+    // A capture that stopped, then had its length shortened (a game writing
+    // 0, which reads as 4), keeps its old write offset until it restarts.
+    NdsSpuSaveState stopped = patterned_spu(0x61u);
+    stopped.capture[0].cnt = 0u;
+    stopped.capture[0].length = 4u;
+    stopped.capture[0].pos = 1048;
+    stopped.capture[0].write_offset = 0x410u;
+    ok &= expect(spu_savestate_import(stopped, &error),
+                 "stopped capture with a stale write offset imports") &&
+        expect(nds_savestate_save_core(path.string(), identity, &error),
+               "stopped capture with a stale write offset saves") &&
+        expect(nds_savestate_load_core(path.string(), identity, &error),
+               "stopped capture with a stale write offset loads") &&
+        expect(spu_savestate_export(&actual),
+               "export SPU after stale capture offset roundtrip") &&
+        expect(same_spu(actual, stopped),
+               "stale capture write offset roundtrips");
+
     // Restore a valid file, then fail a later IO owner after SPU apply. The
     // transaction must put the previous active audio timeline back exactly.
     ok &= expect(nds_savestate_save_core(path.string(), identity, &error),

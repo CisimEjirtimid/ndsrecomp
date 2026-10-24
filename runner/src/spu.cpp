@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -642,9 +643,21 @@ bool spu_savestate_validate(const NdsSpuSaveState& in, std::string* error) {
             ((capture.fifo_write + 16u - capture.fifo_read) & 0xFu) !=
                 (capture.fifo_level & 0xFu) ||
             (capture.write_offset & 3u) != 0u ||
-            (capture.length == 0u ? capture.write_offset != 0u
-                                  : capture.write_offset >= capture.length))
-            return fail("savestate SPU capture state is invalid");
+            // The offset only resets when a capture starts: shortening the
+            // length (or writing 0, which reads as 4) leaves it past the end,
+            // stopped or running, until the next flush wraps it.
+            capture.write_offset > 0x3FFFCu)
+        {
+            char detail[256];
+            std::snprintf(detail, sizeof(detail),
+                "savestate SPU capture state is invalid (cnt %#x dst %#x length %#x "
+                "timer %#x pos %d fifo %u/%u/%u write_offset %#x)",
+                capture.cnt, capture.dst, capture.length, capture.timer, capture.pos,
+                capture.fifo_read, capture.fifo_write, capture.fifo_level,
+                capture.write_offset);
+            if (error) *error = detail;
+            return false;
+        }
         if ((capture.fifo_read & 3u) != 0u ||
             ((capture.cnt & 0x88u) == 0x80u && (capture.fifo_write & 1u) != 0u))
             return fail("savestate SPU capture FIFO cursor is invalid");
