@@ -2463,6 +2463,29 @@ void plugin_draw(int source, const float* src, const float* dst, float degrees,
     SDL_SetTextureAlphaMod(texture, 255);
 }
 
+void plugin_clip(const float* rect) {
+    if (!g_canvas.renderer) return;
+    if (!rect) {
+#if defined(NDS_HAVE_SDL3)
+        SDL_SetRenderClipRect(g_canvas.renderer, nullptr);
+#else
+        SDL_RenderSetClipRect(g_canvas.renderer, nullptr);
+#endif
+        return;
+    }
+    // Whole pixels, covering the requested area.
+    const int x0 = static_cast<int>(std::floor(rect[0]));
+    const int y0 = static_cast<int>(std::floor(rect[1]));
+    const int x1 = static_cast<int>(std::ceil(rect[0] + rect[2]));
+    const int y1 = static_cast<int>(std::ceil(rect[1] + rect[3]));
+    const SDL_Rect r{x0, y0, std::max(0, x1 - x0), std::max(0, y1 - y0)};
+#if defined(NDS_HAVE_SDL3)
+    SDL_SetRenderClipRect(g_canvas.renderer, &r);
+#else
+    SDL_RenderSetClipRect(g_canvas.renderer, &r);
+#endif
+}
+
 void plugin_fill(const float* dst, uint32_t argb) {
     if (!dst || !g_canvas.renderer) return;
     SDL_SetRenderDrawBlendMode(g_canvas.renderer, SDL_BLENDMODE_BLEND);
@@ -2532,11 +2555,13 @@ bool present_through_plugin(FrontendPresentation& presentation,
     g_canvas.wide_fetched = false;
     const NdsTitleDraw draw{output_w, output_h,
                             static_cast<float>(screen_degrees),
-                            plugin_source_size, plugin_draw, plugin_fill};
+                            plugin_source_size, plugin_draw, plugin_fill,
+                            plugin_clip};
     (void)width;
     (void)height;
     // The caller re-applies its logical transform when this declines.
     const bool drew = nds_title_plugin_present(&draw);
+    plugin_clip(nullptr);
     suspend_hd_capture_for_wide_3d(
         drew && (g_canvas.wide3d_fresh || g_canvas.wide3d_blend_fresh));
     return drew;
