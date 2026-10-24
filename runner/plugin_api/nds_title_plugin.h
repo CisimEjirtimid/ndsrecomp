@@ -108,6 +108,11 @@ typedef struct NdsTitleHost {
      * showing the last frame rendered with the roll. Set it at VBlank start
      * before each pass that is not the view. May be NULL (older runners). */
     void (*skip_view_roll)(int skip);
+    /* Run the guest as fast as the host can (the runner's turbo, audio
+     * paused) while `on` is nonzero, e.g. while the player skips text the
+     * title has shown before. Turned off again when the plugin stops
+     * asking. May be NULL (older runners). */
+    void (*fast_forward)(int on);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices

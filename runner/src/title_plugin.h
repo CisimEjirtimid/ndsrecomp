@@ -33,6 +33,8 @@ void nds_title_plugin_latch_pointer(float x, float y, bool over);
 void nds_title_plugin_latch_wheel(float notches);
 void nds_title_plugin_latch_key(int scancode, bool down);
 void nds_title_plugin_release_keys();
+// The plugin asks the runner to run as fast as it can (host->fast_forward).
+bool nds_title_plugin_fast_forward();
 
 // VBlank start, before the VBlank IRQ: run the plugin and apply its input.
 void nds_title_plugin_vblank();
