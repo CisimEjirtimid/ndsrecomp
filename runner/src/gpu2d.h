@@ -208,6 +208,11 @@ struct NdsGpu2dLayers {
     // in bits 6-7, the OBJ pixel's priority.
     const uint8_t* window[2];
     const uint32_t* backdrop[2];  // per line, 0xFFRRGGBB
+    // Per line, the brightness state the line was composed with: the
+    // MASTER_BRIGHT register, and BLDCNT with its BLDY factor (0..16).
+    const uint16_t* master_bright[2];
+    const uint16_t* bldcnt[2];
+    const uint8_t* evy[2];
     uint32_t dispcnt[2];          // as latched on the last line
     uint16_t bgcnt[2][4];
     uint8_t top_engine;

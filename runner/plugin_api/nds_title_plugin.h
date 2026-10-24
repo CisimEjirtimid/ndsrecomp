@@ -61,7 +61,16 @@ typedef struct NdsTitleLayers {
     uint32_t dispcnt[2];
     uint16_t bgcnt[2][4];        /* bits 0-1: the BG's priority */
     uint8_t top_engine;          /* engine shown on the top screen */
+    /* Per line, the brightness each line was composed with (the layers
+     * above are before it): MASTER_BRIGHT, and BLDCNT with its BLDY factor
+     * 0..16 (BLDCNT bits 6-7 = 2 brighten / 3 darken the first targets in
+     * bits 0-5). Games fade with either. */
+    const uint16_t* master_bright[2];
+    const uint16_t* bldcnt[2];
+    const uint8_t* evy[2];
 } NdsTitleLayers;
+/* NdsTitleLayers has the per-line brightness. */
+#define NDS_LAYERS_HAS_BRIGHTNESS 1
 
 typedef struct NdsTitleHost {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
