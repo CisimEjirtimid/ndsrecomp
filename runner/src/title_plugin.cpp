@@ -1,6 +1,7 @@
 #include "title_plugin.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <iterator>
 
@@ -55,6 +56,12 @@ void host_set_view_roll(int quarters) { nds_gpu3d_set_view_roll(quarters); }
 
 void host_skip_view_roll(int skip) { nds_gpu3d_set_view_roll_skip(skip != 0); }
 
+std::atomic<bool> g_fast_forward{false};
+
+void host_fast_forward(int on) {
+    g_fast_forward.store(on != 0, std::memory_order_relaxed);
+}
+
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
     NdsGpu2dLayers l{};
@@ -82,7 +89,7 @@ void host_log(const char* message) {
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
                             host_log, host_write, host_capture_layers,
                             host_layers, host_set_view_roll,
-                            host_skip_view_roll};
+                            host_skip_view_roll, host_fast_forward};
 
 }  // namespace
 
@@ -118,6 +125,10 @@ bool nds_title_plugin_init(const std::string& rom_sha1, bool enabled) {
 }
 
 bool nds_title_plugin_active() { return g_plugin != nullptr; }
+
+bool nds_title_plugin_fast_forward() {
+    return g_plugin && g_fast_forward.load(std::memory_order_relaxed);
+}
 
 void nds_title_plugin_latch_keys(uint16_t pressed) {
     g_host.keys = pressed;

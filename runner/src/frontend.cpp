@@ -4654,7 +4654,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 MphPrimeAction::VirtualStylus)];
         const bool generic_virtual_stylus = virtual_stylus_active();
 
-        const bool turbo_want = turbo_pressed || nds_debug_turbo();
+        const bool turbo_want = turbo_pressed || nds_debug_turbo() ||
+                                nds_title_plugin_fast_forward();
         if (turbo_want != turbo_active) {
             turbo_active = turbo_want;
             if (audio) {
