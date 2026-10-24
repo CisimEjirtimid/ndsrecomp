@@ -705,14 +705,14 @@ std::string handle(const std::string& line) {
             "\"viewport_x0\":%u,\"viewport_y0\":%u,\"viewport_x1\":%u,"
             "\"viewport_y1\":%u,\"viewport_width\":%u,"
             "\"viewport_height\":%u,\"render_width\":%u,"
-            "\"guest_wide_projection\":%u}",
+            "\"guest_wide_projection\":%u,\"clear_attr1\":%u}",
             s.geometry_enabled, s.rendering_enabled, s.gxstat,
             s.cycle_count, s.fifo_level, s.pipe_level,
             s.num_polygons, s.num_vertices, s.flush_request,
             s.num_commands, s.cur_command, s.param_count, s.total_params,
             s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3],
             s.viewport[4], s.viewport[5], s.render_width,
-            s.guest_wide_projection);
+            s.guest_wide_projection, s.clear_attr1);
         return buf;
     }
     if (cmd == "gx_polygon") {
@@ -1244,6 +1244,25 @@ std::string handle(const std::string& line) {
 
     if (cmd == "title_plugin") {
         return "{\"status\":\"" + json_escape(nds_title_plugin_status()) + "\"}";
+    }
+    if (cmd == "hide_3d_polygons") {
+        // {"cmd":"hide_3d_polygons","params":"1FF00000,12400000",
+        // "clear_transparent":true}: hex {mask, value} pairs of
+        // TEXIMAGE_PARAM; empty restores the game's frames.
+        std::vector<uint32_t> params;
+        const std::string list = json_str(line, "params");
+        for (size_t p = 0; p < list.size();) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(list.c_str() + p, &end, 16);
+            if (end == list.c_str() + p) break;
+            params.push_back(static_cast<uint32_t>(v));
+            p = static_cast<size_t>(end - list.c_str());
+            while (p < list.size() && list[p] == ',') ++p;
+        }
+        nds_gpu3d_set_hidden_polygons(params.data(),
+                                      static_cast<uint32_t>(params.size() / 2),
+                                      json_bool(line, "clear_transparent", false));
+        return "{\"pairs\":" + std::to_string(params.size() / 2) + "}";
     }
     if (cmd == "plugin_input") {
         // {"cmd":"plugin_input","wheel":1} / {"key":<SDL scancode>,

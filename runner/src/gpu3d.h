@@ -187,6 +187,12 @@ int nds_gpu3d_view_roll();
 // requested, and the wide image keeps the last rolled frame: for passes a
 // title reads back (object picking) or shows on its other screen.
 void nds_gpu3d_set_view_roll_skip(bool skip);
+// Host only: leave the polygons whose TEXIMAGE_PARAM matches one of `count`
+// {mask, value} pairs out of the frames rendered from now on, and render
+// the clear colour transparent (alpha 0) with `clear_transparent`; count 0
+// and false restore the game's frames.
+void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
+                                   bool clear_transparent);
 bool nds_gpu3d_view_roll_skip();
 // The host-only wide 3D image of the last rasterized frame, output width x
 // 192 (times the internal scale where a hi-res surface is available), as
@@ -268,6 +274,8 @@ struct NdsGxStateSnapshot {
     uint32_t viewport[6];
     uint32_t render_width;
     uint32_t guest_wide_projection;
+    // CLEAR_COLOR of the frame being rendered (bits 16-20: its alpha).
+    uint32_t clear_attr1;
 };
 void nds_gpu3d_state(NdsGxStateSnapshot* out);
 

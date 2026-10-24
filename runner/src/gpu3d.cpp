@@ -1014,6 +1014,7 @@ void nds_gpu3d_state(NdsGxStateSnapshot* out) {
          g3.Viewport[4], g3.Viewport[5]},
         g3.GetRenderWidth(),
         g3.GetGuestWideProjection() ? 1u : 0u,
+        g3.RenderClearAttr1,
     };
 }
 
@@ -1452,6 +1453,12 @@ void nds_gpu3d_set_view_roll_skip(bool skip) {
 
 bool nds_gpu3d_view_roll_skip() { return g_nds.GPU.GPU3D.GetHostViewRollSkip(); }
 
+void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
+                                   bool clear_transparent) {
+    g_nds.GPU.GPU3D.SetHostHiddenPolygons(mask_value, mask_value ? count : 0,
+                                          clear_transparent);
+}
+
 namespace {
 // The rendered frame the last wide image came from (GPU3D render serial).
 uint64_t g_wide_image_serial = 0;
@@ -1497,8 +1504,11 @@ const uint32_t* nds_gpu3d_wide_image(uint32_t* width, uint32_t* height) {
         if (!row) return nullptr;
         uint32_t* dst = native.data() + static_cast<size_t>(y) * w;
         for (uint32_t x = 0; x < w; ++x) {
+            // The 3D alpha (0..31) too: a plugin may cut the frame out
+            // (NdsTitleDraw.keep_3d); drawn as the view it is ignored.
             const uint32_t c = row[x];
-            dst[x] = 0xFF000000u | (c8(c & 0x3Fu) << 16) |
+            const uint32_t a = (c >> 24) & 0x1Fu;
+            dst[x] = (((a << 3) | (a >> 2)) << 24) | (c8(c & 0x3Fu) << 16) |
                      (c8((c >> 8) & 0x3Fu) << 8) | c8((c >> 16) & 0x3Fu);
         }
     }

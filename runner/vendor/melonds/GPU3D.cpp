@@ -2560,14 +2560,33 @@ void GPU3D::VBlank() noexcept
         {
             if (FlushRequest)
             {
-                if (NumPolygons)
+                // Host only: polygons a title plugin hides.
+                auto hidden = [this](const Polygon* poly) {
+                    for (size_t h = 0; h + 1 < HostHiddenPolygons.size(); h += 2)
+                        if ((poly->TexParam & HostHiddenPolygons[h]) == HostHiddenPolygons[h + 1])
+                            return true;
+                    return false;
+                };
+                u32 opaque = NumOpaquePolygons, kept = NumPolygons;
+                if (NumPolygons && !HostHiddenPolygons.empty())
+                {
+                    opaque = kept = 0;
+                    for (u32 i = 0; i < NumPolygons; i++)
+                    {
+                        if (hidden(&CurPolygonRAM[i])) continue;
+                        kept++;
+                        if (!CurPolygonRAM[i].Translucent) opaque++;
+                    }
+                }
+                if (kept)
                 {
                     // separate translucent polygons from opaque ones
 
-                    u32 io = 0, it = NumOpaquePolygons;
+                    u32 io = 0, it = opaque;
                     for (u32 i = 0; i < NumPolygons; i++)
                     {
                         Polygon* poly = &CurPolygonRAM[i];
+                        if (hidden(poly)) continue;
                         if (poly->Translucent)
                             RenderPolygonRAM[it++] = poly;
                         else
@@ -2577,11 +2596,11 @@ void GPU3D::VBlank() noexcept
                     // apply Y-sorting
 
                     std::stable_sort(RenderPolygonRAM.begin(),
-                        RenderPolygonRAM.begin() + ((FlushAttributes & 0x1) ? NumOpaquePolygons : NumPolygons),
+                        RenderPolygonRAM.begin() + ((FlushAttributes & 0x1) ? opaque : kept),
                         YSort);
                 }
 
-                RenderNumPolygons = NumPolygons;
+                RenderNumPolygons = kept;
                 RenderFrameIdentical = false;
                 // An empty frame has no polygons to carry the tag.
                 RenderEmptyHostRolled = NumPolygons == 0 && HostViewRollActive();
@@ -2612,7 +2631,7 @@ void GPU3D::VBlank() noexcept
             memcpy(&RenderFogDensityTable[1], FogDensityTable, 32);
             RenderFogDensityTable[33] = FogDensityTable[31];
 
-            RenderClearAttr1 = ClearAttr1;
+            RenderClearAttr1 = HostClearTransparent ? ClearAttr1 & ~0x001F0000u : ClearAttr1;
             RenderClearAttr2 = ClearAttr2;
         }
 

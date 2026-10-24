@@ -62,6 +62,13 @@ void host_fast_forward(int on) {
     g_fast_forward.store(on != 0, std::memory_order_relaxed);
 }
 
+void host_hide_3d_polygons(const uint32_t* mask_value, int count,
+                           int clear_transparent) {
+    nds_gpu3d_set_hidden_polygons(mask_value,
+                                  count > 0 ? static_cast<uint32_t>(count) : 0u,
+                                  clear_transparent != 0);
+}
+
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
     NdsGpu2dLayers l{};
@@ -89,7 +96,8 @@ void host_log(const char* message) {
 const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
                             host_log, host_write, host_capture_layers,
                             host_layers, host_set_view_roll,
-                            host_skip_view_roll, host_fast_forward};
+                            host_skip_view_roll, host_fast_forward,
+                            host_hide_3d_polygons};
 
 }  // namespace
 
