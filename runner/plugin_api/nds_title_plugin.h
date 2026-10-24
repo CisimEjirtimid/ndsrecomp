@@ -176,9 +176,21 @@ typedef struct NdsTitleDraw {
      * pixels (e.g. a rotated map inside its panel); NULL lifts the limit.
      * Lifted again when present returns. */
     void (*clip)(const float* rect);
+    /* Draw the plugin's own pixels (its composites, e.g. a round minimap,
+     * or text): `pixels` (w x h, 0xAARRGGBB with straight alpha, rows
+     * packed) are uploaded to host image `slot` (0..NDS_DRAW_IMAGE_SLOTS-1)
+     * and drawn like `draw`, `src` in image pixels (NULL = all). The pixels
+     * are read during the call. NULL `pixels` draws the slot's last upload
+     * again. */
+    void (*image)(int slot, const uint32_t* pixels, int w, int h,
+                  const float* src, const float* dst, float degrees,
+                  float alpha, int flags);
 } NdsTitleDraw;
 /* NdsTitleDraw has `clip`. */
 #define NDS_DRAW_HAS_CLIP 1
+/* NdsTitleDraw has `image`. */
+#define NDS_DRAW_HAS_IMAGE 1
+#define NDS_DRAW_IMAGE_SLOTS 8
 
 typedef struct NdsTitlePlugin {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
