@@ -2260,6 +2260,9 @@ struct PluginCanvas {
     bool hd_capture_suspended = false;
     NdsGpu2dLayers frame{};
     bool have_frame = false;
+    // The plugin's own images (NdsTitleDraw.image), one texture per slot.
+    SDL_Texture* images[NDS_DRAW_IMAGE_SLOTS]{};
+    int image_w[NDS_DRAW_IMAGE_SLOTS]{}, image_h[NDS_DRAW_IMAGE_SLOTS]{};
 };
 PluginCanvas g_canvas;
 
@@ -2269,6 +2272,8 @@ void plugin_canvas_destroy() {
             if (texture) SDL_DestroyTexture(texture);
             texture = nullptr;
         }
+    for (SDL_Texture* texture : g_canvas.images)
+        if (texture) SDL_DestroyTexture(texture);
     if (g_canvas.wide3d) SDL_DestroyTexture(g_canvas.wide3d);
     if (g_canvas.wide3d_blend) SDL_DestroyTexture(g_canvas.wide3d_blend);
     g_canvas = PluginCanvas{};
@@ -2425,12 +2430,11 @@ int plugin_source_size(int source, int* w, int* h) {
     return 1;
 }
 
-void plugin_draw(int source, const float* src, const float* dst, float degrees,
-                 float alpha, int flags) {
+// Draw `src` of a texture `sw` x `sh` units across into `dst` (the texture
+// may hold more pixels per unit: HD screens).
+void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
+                   const float* dst, float degrees, float alpha, int flags) {
     const bool smooth = (flags & NDS_DRAW_SMOOTH) != 0;
-    int sw = 0, sh = 0;
-    SDL_Texture* texture =
-        plugin_source(source, &sw, &sh, (flags & NDS_DRAW_KEEP) != 0);
     if (!texture || !dst) return;
     float tw = 0.0f, th = 0.0f;
     if (!texture_size(texture, &tw, &th)) return;
@@ -2461,6 +2465,40 @@ void plugin_draw(int source, const float* src, const float* dst, float degrees,
                       SDL_FLIP_NONE);
 #endif
     SDL_SetTextureAlphaMod(texture, 255);
+}
+
+void plugin_draw(int source, const float* src, const float* dst, float degrees,
+                 float alpha, int flags) {
+    int sw = 0, sh = 0;
+    SDL_Texture* texture =
+        plugin_source(source, &sw, &sh, (flags & NDS_DRAW_KEEP) != 0);
+    plugin_render(texture, sw, sh, src, dst, degrees, alpha, flags);
+}
+
+void plugin_image(int slot, const uint32_t* pixels, int w, int h,
+                  const float* src, const float* dst, float degrees,
+                  float alpha, int flags) {
+    if (slot < 0 || slot >= NDS_DRAW_IMAGE_SLOTS || !g_canvas.renderer) return;
+    SDL_Texture*& texture = g_canvas.images[slot];
+    if (pixels) {
+        if (w <= 0 || h <= 0) return;
+        if (texture && (g_canvas.image_w[slot] != w || g_canvas.image_h[slot] != h)) {
+            SDL_DestroyTexture(texture);
+            texture = nullptr;
+        }
+        if (!texture) {
+            texture = SDL_CreateTexture(g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                        SDL_TEXTUREACCESS_STREAMING, w, h);
+            if (!texture) return;
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            g_canvas.image_w[slot] = w;
+            g_canvas.image_h[slot] = h;
+        }
+        SDL_UpdateTexture(texture, nullptr, pixels,
+                          w * static_cast<int>(sizeof(uint32_t)));
+    }
+    plugin_render(texture, g_canvas.image_w[slot], g_canvas.image_h[slot], src,
+                  dst, degrees, alpha, flags);
 }
 
 void plugin_clip(const float* rect) {
@@ -2556,7 +2594,7 @@ bool present_through_plugin(FrontendPresentation& presentation,
     const NdsTitleDraw draw{output_w, output_h,
                             static_cast<float>(screen_degrees),
                             plugin_source_size, plugin_draw, plugin_fill,
-                            plugin_clip};
+                            plugin_clip, plugin_image};
     (void)width;
     (void)height;
     // The caller re-applies its logical transform when this declines.
