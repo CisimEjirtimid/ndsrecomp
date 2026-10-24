@@ -61,6 +61,9 @@ int host_layers(NdsTitleLayers* out) {
         for (int i = 0; i < NDS_LAYER_COUNT; ++i) out->pixels[e][i] = l.pixels[e][i];
         out->window[e] = l.window[e];
         out->backdrop[e] = l.backdrop[e];
+        out->master_bright[e] = l.master_bright[e];
+        out->bldcnt[e] = l.bldcnt[e];
+        out->evy[e] = l.evy[e];
         out->dispcnt[e] = l.dispcnt[e];
         for (int bg = 0; bg < 4; ++bg) out->bgcnt[e][bg] = l.bgcnt[e][bg];
     }

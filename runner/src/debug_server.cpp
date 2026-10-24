@@ -1219,14 +1219,18 @@ std::string handle(const std::string& line) {
         const uint64_t engine = json_u64(line, "engine", 99);
         const uint64_t layer = json_u64(line, "layer", 99);
         if (engine > 1 || layer > NDS_GPU2D_LAYER_COUNT) {
-            char b[256];
+            // Brightness state at the middle line (96) of each engine.
+            char b[384];
             std::snprintf(b, sizeof(b),
                 "{\"frame\":%llu,\"top_engine\":%u,\"dispcnt\":[%u,%u],"
-                "\"bgcnt\":[[%u,%u,%u,%u],[%u,%u,%u,%u]]}",
+                "\"bgcnt\":[[%u,%u,%u,%u],[%u,%u,%u,%u]],"
+                "\"master_bright\":[%u,%u],\"bldcnt\":[%u,%u],\"evy\":[%u,%u]}",
                 static_cast<unsigned long long>(l.frame), l.top_engine,
                 l.dispcnt[0], l.dispcnt[1], l.bgcnt[0][0], l.bgcnt[0][1],
                 l.bgcnt[0][2], l.bgcnt[0][3], l.bgcnt[1][0], l.bgcnt[1][1],
-                l.bgcnt[1][2], l.bgcnt[1][3]);
+                l.bgcnt[1][2], l.bgcnt[1][3], l.master_bright[0][96],
+                l.master_bright[1][96], l.bldcnt[0][96], l.bldcnt[1][96],
+                l.evy[0][96], l.evy[1][96]);
             return b;
         }
         std::string hex;

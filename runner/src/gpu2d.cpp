@@ -135,6 +135,9 @@ struct LayerFrame {
     std::array<std::array<std::vector<uint32_t>, NDS_GPU2D_LAYER_COUNT>, 2> pixels;
     std::array<std::vector<uint8_t>, 2> window;
     std::array<std::array<uint32_t, 192>, 2> backdrop{};
+    std::array<std::array<uint16_t, 192>, 2> master_bright{};
+    std::array<std::array<uint16_t, 192>, 2> bldcnt{};
+    std::array<std::array<uint8_t, 192>, 2> evy{};
     std::array<uint32_t, 2> dispcnt{};
     std::array<std::array<uint16_t, 4>, 2> bgcnt{};
     uint8_t top_engine = 0;
@@ -1891,6 +1894,14 @@ void record_layer_line(const LineJob& job, int engine, const LineScratch& sc,
 void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
     const Unit& u = job.unit[engine];
     const int y = job.y;
+    // Layer capture: both engines' brightness state, captured or not (cheap,
+    // and a title fading one screen dims what it draws from the other).
+    if (g_layer_capture) {
+        LayerFrame& f = g_layer_frames[g_layer_back];
+        f.master_bright[engine][y] = u.master_bright;
+        f.bldcnt[engine][y] = u.bldcnt;
+        f.evy[engine][y] = u.evy;
+    }
     Frame& fb = g_fb[job.buffer][job.screen[engine]];
     uint32_t* const dst = fb.data() + y * 256;
     const uint8_t* const palette = job.palette[engine];
@@ -3035,6 +3046,9 @@ bool nds_gpu2d_layers(NdsGpu2dLayers* out) {
             out->pixels[e][l] = f.pixels[e][l].data();
         out->window[e] = f.window[e].data();
         out->backdrop[e] = f.backdrop[e].data();
+        out->master_bright[e] = f.master_bright[e].data();
+        out->bldcnt[e] = f.bldcnt[e].data();
+        out->evy[e] = f.evy[e].data();
         out->dispcnt[e] = f.dispcnt[e];
         for (int bg = 0; bg < 4; ++bg) out->bgcnt[e][bg] = f.bgcnt[e][bg];
     }
