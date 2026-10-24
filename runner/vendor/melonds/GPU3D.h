@@ -21,6 +21,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 
 #include "Savestate.h"
 #include "FIFO.h"
@@ -129,6 +130,17 @@ public:
     // stays requested (a pass the title reads back or shows elsewhere).
     void SetHostViewRollSkip(bool skip) noexcept { HostViewRollSkip = skip; }
     [[nodiscard]] bool GetHostViewRollSkip() const noexcept { return HostViewRollSkip; }
+    // Host only: polygons whose TEXIMAGE_PARAM matches one of `count`
+    // {mask, value} pairs ((param & mask) == value) are left out of the
+    // frames latched while set, and with `clear_transparent` the clear
+    // colour renders with alpha 0. For a title plugin that draws a frame's
+    // parts itself (a character without the backdrop the game draws behind
+    // it); what the guest displays and captures changes too.
+    void SetHostHiddenPolygons(const u32* mask_value, u32 count, bool clear_transparent)
+    {
+        HostHiddenPolygons.assign(mask_value, mask_value + 2 * count);
+        HostClearTransparent = clear_transparent;
+    }
     // Whether the last frame rendered (VCount 215) has polygons submitted
     // under the view roll: a title that shares the 3D engine between passes
     // rolls only some of them, and the host keeps showing the last one.
@@ -228,6 +240,8 @@ private:
     // above 256, where it replaces the full-viewport clip X widening.
     int HostViewRoll = 0;
     bool HostViewRollSkip = false;
+    std::vector<u32> HostHiddenPolygons;  // {mask, value} pairs
+    bool HostClearTransparent = false;
     bool RenderEmptyHostRolled = false;  // swapped in empty under the roll
     bool RenderedHostRolled = false;
     u64 RenderSerial = 0;

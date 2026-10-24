@@ -2277,6 +2277,8 @@ struct PluginCanvas {
     bool hd_capture_suspended = false;
     NdsGpu2dLayers frame{};
     bool have_frame = false;
+    // NdsTitleDraw.tint: the colour the following draws are multiplied by.
+    uint32_t tint = 0xFFFFFFu;
     // The plugin's own images (NdsTitleDraw.image), one texture per slot.
     SDL_Texture* images[NDS_DRAW_IMAGE_SLOTS]{};
     int image_w[NDS_DRAW_IMAGE_SLOTS]{}, image_h[NDS_DRAW_IMAGE_SLOTS]{};
@@ -2470,6 +2472,9 @@ void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
     const float sx = tw / static_cast<float>(sw), sy = th / static_cast<float>(sh);
     const Uint8 a = static_cast<Uint8>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
     SDL_SetTextureAlphaMod(texture, a);
+    SDL_SetTextureColorMod(texture, static_cast<Uint8>(g_canvas.tint >> 16),
+                           static_cast<Uint8>(g_canvas.tint >> 8),
+                           static_cast<Uint8>(g_canvas.tint));
 #if defined(NDS_HAVE_SDL3)
     SDL_SetTextureScaleMode(texture, smooth ? SDL_SCALEMODE_LINEAR
                                             : SDL_SCALEMODE_NEAREST);
@@ -2493,7 +2498,10 @@ void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
                       SDL_FLIP_NONE);
 #endif
     SDL_SetTextureAlphaMod(texture, 255);
+    SDL_SetTextureColorMod(texture, 255, 255, 255);
 }
+
+void plugin_tint(uint32_t rgb) { g_canvas.tint = rgb & 0xFFFFFFu; }
 
 void plugin_draw(int source, const float* src, const float* dst, float degrees,
                  float alpha, int flags) {
@@ -2503,30 +2511,47 @@ void plugin_draw(int source, const float* src, const float* dst, float degrees,
     plugin_render(texture, sw, sh, src, dst, degrees, alpha, flags);
 }
 
+// Upload `pixels` (w x h, straight alpha) into image slot `slot`.
+bool plugin_image_upload(int slot, const uint32_t* pixels, int w, int h) {
+    if (w <= 0 || h <= 0) return false;
+    SDL_Texture*& texture = g_canvas.images[slot];
+    if (texture && (g_canvas.image_w[slot] != w || g_canvas.image_h[slot] != h)) {
+        SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+    if (!texture) {
+        texture = SDL_CreateTexture(g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (!texture) return false;
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        g_canvas.image_w[slot] = w;
+        g_canvas.image_h[slot] = h;
+    }
+    SDL_UpdateTexture(texture, nullptr, pixels, w * static_cast<int>(sizeof(uint32_t)));
+    return true;
+}
+
 void plugin_image(int slot, const uint32_t* pixels, int w, int h,
                   const float* src, const float* dst, float degrees,
                   float alpha, int flags) {
     if (slot < 0 || slot >= NDS_DRAW_IMAGE_SLOTS || !g_canvas.renderer) return;
-    SDL_Texture*& texture = g_canvas.images[slot];
-    if (pixels) {
-        if (w <= 0 || h <= 0) return;
-        if (texture && (g_canvas.image_w[slot] != w || g_canvas.image_h[slot] != h)) {
-            SDL_DestroyTexture(texture);
-            texture = nullptr;
-        }
-        if (!texture) {
-            texture = SDL_CreateTexture(g_canvas.renderer, SDL_PIXELFORMAT_ARGB8888,
-                                        SDL_TEXTUREACCESS_STREAMING, w, h);
-            if (!texture) return;
-            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-            g_canvas.image_w[slot] = w;
-            g_canvas.image_h[slot] = h;
-        }
-        SDL_UpdateTexture(texture, nullptr, pixels,
-                          w * static_cast<int>(sizeof(uint32_t)));
-    }
-    plugin_render(texture, g_canvas.image_w[slot], g_canvas.image_h[slot], src,
-                  dst, degrees, alpha, flags);
+    if (pixels && !plugin_image_upload(slot, pixels, w, h)) return;
+    plugin_render(g_canvas.images[slot], g_canvas.image_w[slot],
+                  g_canvas.image_h[slot], src, dst, degrees, alpha, flags);
+}
+
+// NdsTitleDraw.keep_3d: this frame's wide 3D image, its alpha included,
+// into an image slot (drawn later with image(slot, NULL, ...)).
+int plugin_keep_3d(int slot, int* w, int* h) {
+    if (slot < 0 || slot >= NDS_DRAW_IMAGE_SLOTS || !g_canvas.renderer) return 0;
+    uint32_t iw = 0, ih = 0;
+    const uint32_t* const pixels = plugin_wide_image(&iw, &ih);
+    if (!pixels || !plugin_image_upload(slot, pixels, static_cast<int>(iw),
+                                        static_cast<int>(ih)))
+        return 0;
+    if (w) *w = static_cast<int>(iw);
+    if (h) *h = static_cast<int>(ih);
+    return 1;
 }
 
 void plugin_clip(const float* rect) {
@@ -2622,12 +2647,14 @@ bool present_through_plugin(FrontendPresentation& presentation,
     const NdsTitleDraw draw{output_w, output_h,
                             static_cast<float>(screen_degrees),
                             plugin_source_size, plugin_draw, plugin_fill,
-                            plugin_clip, plugin_image};
+                            plugin_clip, plugin_image, plugin_keep_3d,
+                            plugin_tint};
     (void)width;
     (void)height;
     // The caller re-applies its logical transform when this declines.
     const bool drew = nds_title_plugin_present(&draw);
     plugin_clip(nullptr);
+    plugin_tint(0xFFFFFFu);
     suspend_hd_capture_for_wide_3d(
         drew && (g_canvas.wide3d_fresh || g_canvas.wide3d_blend_fresh));
     return drew;

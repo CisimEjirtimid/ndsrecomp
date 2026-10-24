@@ -113,6 +113,18 @@ typedef struct NdsTitleHost {
      * title has shown before. Turned off again when the plugin stops
      * asking. May be NULL (older runners). */
     void (*fast_forward)(int on);
+    /* Leave out of the 3D frames rendered from now on the polygons whose
+     * TEXIMAGE_PARAM matches one of `count` {mask, value} pairs ((param &
+     * mask) == value; e.g. mask 0x1FF00000 picks a texture format and size
+     * wherever it sits in VRAM), and with `clear_transparent` render the
+     * clear colour with alpha 0. count 0 and 0 restore the game's frames.
+     * For a title that draws a scene's parts itself, e.g. a character
+     * without the backdrop the game renders behind it (see
+     * NdsTitleDraw.keep_3d). Host only, but what the guest then displays and
+     * captures changes too: only in scenes that never read it back. May be
+     * NULL (older runners). */
+    void (*hide_3d_polygons)(const uint32_t* mask_value, int count,
+                             int clear_transparent);
 } NdsTitleHost;
 
 /* Player input for one frame. The runner fills it from the host devices
@@ -214,12 +226,26 @@ typedef struct NdsTitleDraw {
     void (*image)(int slot, const uint32_t* pixels, int w, int h,
                   const float* src, const float* dst, float degrees,
                   float alpha, int flags);
+    /* Copy this frame's wide 3D image (NDS_DRAW_3D's pixels, with the 3D
+     * alpha: 0 where nothing was drawn under a transparent clear colour,
+     * see NdsTitleHost.hide_3d_polygons) into image `slot`, to draw now or
+     * later with image(slot, NULL, ...); *w x *h is its size in pixels.
+     * Returns 0 when there is no image. For games that draw a different
+     * picture with the 3D engine every other frame. May be NULL. */
+    int (*keep_3d)(int slot, int* w, int* h);
+    /* Multiply the colour of the draws and images that follow by `rgb`
+     * (0xRRGGBB; 0xFFFFFF for none), e.g. to darken a character who is not
+     * speaking. Fills are unaffected. Lifted again when present returns. */
+    void (*tint)(uint32_t rgb);
 } NdsTitleDraw;
 /* NdsTitleDraw has `clip`. */
 #define NDS_DRAW_HAS_CLIP 1
 /* NdsTitleDraw has `image`. */
 #define NDS_DRAW_HAS_IMAGE 1
-#define NDS_DRAW_IMAGE_SLOTS 8
+/* NdsTitleDraw has `keep_3d` and `tint`; NdsTitleHost has
+ * `hide_3d_polygons`. */
+#define NDS_DRAW_HAS_KEEP_3D 1
+#define NDS_DRAW_IMAGE_SLOTS 16
 
 typedef struct NdsTitlePlugin {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
