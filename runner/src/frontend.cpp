@@ -213,6 +213,7 @@ namespace {
 #undef SDL_MOUSEBUTTONDOWN
 #undef SDL_MOUSEBUTTONUP
 #undef SDL_MOUSEMOTION
+#undef SDL_MOUSEWHEEL
 #undef SDL_QUIT
 #undef SDL_FALSE
 #undef SDL_TRUE
@@ -256,6 +257,7 @@ namespace {
 #define SDL_MOUSEBUTTONDOWN SDL_EVENT_MOUSE_BUTTON_DOWN
 #define SDL_MOUSEBUTTONUP SDL_EVENT_MOUSE_BUTTON_UP
 #define SDL_MOUSEMOTION SDL_EVENT_MOUSE_MOTION
+#define SDL_MOUSEWHEEL SDL_EVENT_MOUSE_WHEEL
 #define SDL_QUIT SDL_EVENT_QUIT
 #define SDL_FALSE false
 #define SDL_TRUE true
@@ -791,6 +793,17 @@ SDL_Scancode sdl_event_scancode(const SDL_Event& event) {
 #else
     return event.key.keysym.scancode;
 #endif
+}
+
+// Wheel notches, positive away from the user whatever the system's
+// "natural scrolling" setting.
+float sdl_event_wheel_y(const SDL_Event& event) {
+#if defined(NDS_HAVE_SDL3)
+    const float y = event.wheel.y;
+#else
+    const float y = event.wheel.preciseY;
+#endif
+    return event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -y : y;
 }
 
 bool sdl_event_shift(const SDL_Event& event) {
@@ -3954,12 +3967,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                         runtime_ui, menu_input, event.type == SDL_KEYDOWN,
                         event.key.repeat)) {
                     finish_runtime_menu_input(was_open);
+                    // The menu has the keyboard now: nothing stays held
+                    // for a title plugin.
+                    if (runtime_menu_open()) nds_title_plugin_release_keys();
                     continue;
                 }
                 if (was_open) {
                     finish_runtime_menu_input(was_open);
                     continue;
                 }
+                // Title plugins see the keyboard as such (their own keys,
+                // next to the DS buttons mapped below).
+                if (nds_title_plugin_active())
+                    nds_title_plugin_latch_key(static_cast<int>(scancode),
+                                               event.type == SDL_KEYDOWN);
             }
             if (event.type == SDL_KEYDOWN && !event.key.repeat) {
                 const SDL_Scancode scancode = sdl_event_scancode(event);
@@ -4145,7 +4166,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
             if (runtime_menu_open() &&
                 (event.type == SDL_MOUSEBUTTONDOWN ||
                  event.type == SDL_MOUSEBUTTONUP ||
-                 event.type == SDL_MOUSEMOTION)) {
+                 event.type == SDL_MOUSEMOTION ||
+                 event.type == SDL_MOUSEWHEEL)) {
                 continue;
             }
             // Title plugins see the mouse as such too (camera turns), next
@@ -4156,6 +4178,17 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                         static_cast<float>(event.motion.xrel),
                         static_cast<float>(event.motion.yrel),
                         plugin_mouse_buttons);
+                    if (event.motion.windowID == presentation.window_ids[0])
+                        nds_title_plugin_latch_pointer(
+                            static_cast<float>(event.motion.x),
+                            static_cast<float>(event.motion.y), true);
+                } else if (event.type == SDL_MOUSEWHEEL) {
+                    nds_title_plugin_latch_wheel(sdl_event_wheel_y(event));
+                } else if (sdl_window_event_is(event,
+                                               SDL_EVENT_WINDOW_MOUSE_LEAVE) &&
+                           event.window.windowID ==
+                               presentation.window_ids[0]) {
+                    nds_title_plugin_latch_pointer(0.0f, 0.0f, false);
                 } else if (event.type == SDL_MOUSEBUTTONDOWN ||
                            event.type == SDL_MOUSEBUTTONUP) {
                     const uint8_t bit =

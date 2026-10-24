@@ -1,6 +1,8 @@
 #include "title_plugin.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 #include "state.h"
 #include "gpu2d.h"
@@ -23,6 +25,7 @@ uint64_t g_touch_downs = 0, g_touch_ups = 0;
 uint16_t g_touch_last_x = 0, g_touch_last_y = 0;
 bool g_presented = false;  // the plugin drew the last presented frame
 NdsTitleInput g_host{};
+uint8_t g_keyboard[NDS_TITLE_KEYBOARD_SIZE] = {};
 
 uint32_t host_read(uint32_t addr, void* dst, uint32_t len) {
     auto* out = static_cast<uint8_t*>(dst);
@@ -108,6 +111,8 @@ bool nds_title_plugin_init(const std::string& rom_sha1, bool enabled) {
         return false;
     }
     g_host = NdsTitleInput{};
+    std::fill(std::begin(g_keyboard), std::end(g_keyboard), uint8_t{0});
+    g_host.keyboard = g_keyboard;
     std::fprintf(stderr, "[plugin] %s active\n", plugin->name);
     return true;
 }
@@ -148,6 +153,25 @@ void nds_title_plugin_latch_mouse(float dx, float dy, uint8_t buttons) {
     g_host.mouse_buttons = buttons;
 }
 
+void nds_title_plugin_latch_pointer(float x, float y, bool over) {
+    if (over) {
+        g_host.mouse_x = x;
+        g_host.mouse_y = y;
+    }
+    g_host.mouse_over = over ? 1u : 0u;
+}
+
+void nds_title_plugin_latch_wheel(float notches) { g_host.wheel += notches; }
+
+void nds_title_plugin_latch_key(int scancode, bool down) {
+    if (scancode >= 0 && scancode < NDS_TITLE_KEYBOARD_SIZE)
+        g_keyboard[scancode] = down ? 1u : 0u;
+}
+
+void nds_title_plugin_release_keys() {
+    std::fill(std::begin(g_keyboard), std::end(g_keyboard), uint8_t{0});
+}
+
 void nds_title_plugin_vblank() {
     if (!g_plugin) return;
     ++g_frame;
@@ -155,6 +179,7 @@ void nds_title_plugin_vblank() {
     // Motion is per frame: what moved since the last VBlank.
     g_host.mouse_dx = 0.0f;
     g_host.mouse_dy = 0.0f;
+    g_host.wheel = 0.0f;
     if (g_plugin->frame) g_plugin->frame(&kHost, &io);
     nds_apply_guest_keys(static_cast<uint16_t>(0x0FFFu & ~io.keys));
     nds_apply_guest_touch(io.touch_x, io.touch_y, io.touch_down != 0);

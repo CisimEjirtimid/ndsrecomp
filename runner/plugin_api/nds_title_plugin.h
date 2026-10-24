@@ -134,7 +134,22 @@ typedef struct NdsTitleInput {
      * button over the touch screen, see `pointer`) is unaffected. */
     float mouse_dx, mouse_dy;
     uint8_t mouse_buttons;
+    /* Where the mouse is, in canvas pixels (what `pointer` is given), and
+     * whether it is over the canvas at all (for hover effects). */
+    float mouse_x, mouse_y;
+    uint8_t mouse_over;
+    /* Mouse wheel notches turned since the last frame, positive away from
+     * the player ("up"). */
+    float wheel;
+    /* The host keyboard: NDS_TITLE_KEYBOARD_SIZE entries indexed by USB HID
+     * usage id (= SDL scancode), 1 while held. Keys the runner maps to DS
+     * buttons reach `keys` too, so a plugin's own features take others.
+     * Empty while the runner's menu has the keyboard. */
+    const uint8_t* keyboard;
 } NdsTitleInput;
+/* NdsTitleInput has mouse_x / mouse_y / mouse_over, wheel and keyboard. */
+#define NDS_INPUT_HAS_POINTER 1
+#define NDS_TITLE_KEYBOARD_SIZE 512
 
 enum {
     NDS_MOUSE_LEFT = 1u << 0,

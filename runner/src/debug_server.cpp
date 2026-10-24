@@ -1245,6 +1245,24 @@ std::string handle(const std::string& line) {
     if (cmd == "title_plugin") {
         return "{\"status\":\"" + json_escape(nds_title_plugin_status()) + "\"}";
     }
+    if (cmd == "plugin_input") {
+        // {"cmd":"plugin_input","wheel":1} / {"key":<SDL scancode>,
+        // "down":true} / {"x":640,"y":360,"over":true}: what a windowed
+        // runner's mouse and keyboard give a title plugin, for headless runs.
+        size_t p = 0;
+        if (json_find(line, "wheel", p))
+            nds_title_plugin_latch_wheel(
+                static_cast<float>(json_i64(line, "wheel", 0)));
+        if (json_find(line, "key", p))
+            nds_title_plugin_latch_key(static_cast<int>(json_i64(line, "key", -1)),
+                                       json_bool(line, "down", true));
+        if (json_find(line, "x", p))
+            nds_title_plugin_latch_pointer(
+                static_cast<float>(json_i64(line, "x", 0)),
+                static_cast<float>(json_i64(line, "y", 0)),
+                json_bool(line, "over", true));
+        return "{\"ok\":true}";
+    }
 
     if (cmd == "title_patches") {
         const NdsTitlePatchDebugState s = nds_title_patches_debug_state();
