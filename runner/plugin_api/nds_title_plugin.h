@@ -114,7 +114,24 @@ typedef struct NdsTitleInput {
     uint8_t touch_down;
     uint16_t touch_x; /* raw bottom-screen pixels */
     uint16_t touch_y;
+    /* Read-only extras (changing them has no effect on the guest). */
+    /* The pad's sticks, [0] left and [1] right, each {x, y} in -1..1 (x
+     * right, y down) relative to the player, before any layout turning; 0
+     * inside the dead zone and beyond it rescaled to start from 0. The left
+     * stick also reaches `keys` / `screen_dpad` as D-pad directions. */
+    float stick[2][2];
+    /* Mouse motion over the window since the last frame, in window pixels,
+     * and the buttons held now (NDS_MOUSE_*). The stylus mapping (the left
+     * button over the touch screen, see `pointer`) is unaffected. */
+    float mouse_dx, mouse_dy;
+    uint8_t mouse_buttons;
 } NdsTitleInput;
+
+enum {
+    NDS_MOUSE_LEFT = 1u << 0,
+    NDS_MOUSE_RIGHT = 1u << 1,
+    NDS_MOUSE_MIDDLE = 1u << 2
+};
 
 /* Drawing for `present`: a canvas in the window's pixels (the coordinates
  * mouse positions are then reported in, see `pointer`). Sources are the two

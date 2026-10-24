@@ -3070,6 +3070,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // everywhere), kept separate from button-event state so a wobbling
     // stick never fights explicit D-pad presses.
     uint16_t stick_pressed = 0;
+    // Mouse buttons held, for a title plugin (NDS_MOUSE_*).
+    uint8_t plugin_mouse_buttons = 0;
     auto publish_keys = [&]() {
         uint16_t pressed = static_cast<uint16_t>(
             keyboard_pressed | controller_pressed | mouse_pressed |
@@ -4083,6 +4085,31 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                  event.type == SDL_MOUSEMOTION)) {
                 continue;
             }
+            // Title plugins see the mouse as such too (camera turns), next
+            // to the stylus mapping below.
+            if (nds_title_plugin_active()) {
+                if (event.type == SDL_MOUSEMOTION) {
+                    nds_title_plugin_latch_mouse(
+                        static_cast<float>(event.motion.xrel),
+                        static_cast<float>(event.motion.yrel),
+                        plugin_mouse_buttons);
+                } else if (event.type == SDL_MOUSEBUTTONDOWN ||
+                           event.type == SDL_MOUSEBUTTONUP) {
+                    const uint8_t bit =
+                        event.button.button == SDL_BUTTON_LEFT ? NDS_MOUSE_LEFT
+                        : event.button.button == SDL_BUTTON_RIGHT
+                            ? NDS_MOUSE_RIGHT
+                        : event.button.button == SDL_BUTTON_MIDDLE
+                            ? NDS_MOUSE_MIDDLE
+                            : 0;
+                    if (event.type == SDL_MOUSEBUTTONDOWN)
+                        plugin_mouse_buttons |= bit;
+                    else
+                        plugin_mouse_buttons &= static_cast<uint8_t>(~bit);
+                    nds_title_plugin_latch_mouse(0.0f, 0.0f,
+                                                 plugin_mouse_buttons);
+                }
+            }
             const bool primary_left_down =
                 event.type == SDL_MOUSEBUTTONDOWN &&
                 event.button.button == SDL_BUTTON_LEFT &&
@@ -4351,6 +4378,32 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 stick_dir(lx, 1u << 5, false);   // Left
                 stick_dir(ly, 1u << 6, false);   // Up (SDL Y axis points down)
                 stick_dir(ly, 1u << 7, true);    // Down
+            }
+            if (nds_title_plugin_active()) {
+                // Both sticks as vectors: a radial dead zone, rescaled so
+                // the live range starts at 0.
+                auto dead_zone = [](float x, float y, float* ox, float* oy) {
+                    constexpr float kDead = 0.2f;
+                    const float m = std::sqrt(x * x + y * y);
+                    if (m <= kDead) {
+                        *ox = *oy = 0.0f;
+                        return;
+                    }
+                    const float scale =
+                        std::min(1.0f, (m - kDead) / (1.0f - kDead)) / m;
+                    *ox = x * scale;
+                    *oy = y * scale;
+                };
+                float sx[2] = {}, sy[2] = {};
+                if (!menu_open) {
+                    const float rx = SDL_GameControllerGetAxis(
+                        controller, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0f;
+                    const float ry = SDL_GameControllerGetAxis(
+                        controller, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0f;
+                    dead_zone(lx, ly, &sx[0], &sy[0]);
+                    dead_zone(rx, ry, &sx[1], &sy[1]);
+                }
+                nds_title_plugin_latch_sticks(sx[0], sy[0], sx[1], sy[1]);
             }
 
             if (!menu_open && virtual_stylus_available) {
