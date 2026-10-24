@@ -257,6 +257,18 @@ later" option from every downstream recipient. xBRZ is "xBR, Zenju
 enhanced", so xBR-lv2 is the same algorithm family without that cost. No
 DeSmuME source is used.
 
+## stb_image and stb_image_write (texture packs)
+
+Texture packs read PNG replacements with `stb_image` (v2.27) and dumps
+write PNGs with `stb_image_write` (v1.16).
+
+- Upstream: https://github.com/nothings/stb
+- Copyright (c) 2017 Sean Barrett
+- License: MIT or public domain (Unlicense), the user's choice; both
+  notices are at the end of each header
+- Local scope: `runner/vendor/stb/`, compiled once (static, PNG only) in
+  `runner/src/melonds_compute/TextureUpscale.cpp`
+
 ## mGBA
 
 mGBA is copyright © Jeffrey Pfau and contributors and is distributed under the

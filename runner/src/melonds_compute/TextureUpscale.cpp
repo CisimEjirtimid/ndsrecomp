@@ -3,14 +3,55 @@
 // source string and THIRD_PARTY_ATTRIBUTION.md.
 #include "TextureUpscale.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "glad/glad.h"
 
+// PNG reading (packs) and writing (dumps). Static, so the copies other
+// libraries in the runner may carry never clash.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#include "../../vendor/stb/stb_image.h"
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#include "../../vendor/stb/stb_image_write.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 namespace {
 
-int g_factor = 1;
+// Settings (take effect at the next apply) and what the current cache uses.
+int g_factor = 1;  // configured; 1 means 4 for Smooth and packs
+NdsTextureFilter g_filter = NdsTextureFilter::Original;
+std::string g_pack_dir;
+bool g_pack_enabled = false;
+std::string g_dump_dir;
+int g_applied = 1;          // storage factor of the current cache
+bool g_applied_smooth = false;
+bool g_applied_pack = false;
+// Pack file stems (lowercase) -> paths, scanned at apply.
+std::unordered_map<std::string, std::filesystem::path> g_pack;
+std::unordered_set<std::string> g_dumped;
+
 bool g_ready = false;
 GLuint g_program = 0;
 GLuint g_staging = 0;
@@ -235,57 +276,174 @@ void ensure_staging(uint32_t width, uint32_t height)
     g_staging_h = height;
 }
 
-}  // namespace
+// RGB6A5 (r, g, b 0..63, a 0..31) to and from 8-bit RGBA.
+uint8_t c6_to_8(uint8_t v) { return static_cast<uint8_t>((v << 2) | (v >> 4)); }
+uint8_t a5_to_8(uint8_t v) { return static_cast<uint8_t>((v * 255 + 15) / 31); }
+uint8_t c8_to_6(uint8_t v) { return static_cast<uint8_t>(v >> 2); }
+uint8_t a8_to_5(uint8_t v) { return static_cast<uint8_t>((v * 31 + 127) / 255); }
 
-void nds_texture_upscale_set_factor(int factor)
-{
-    g_factor = (factor == 2 || factor == 4) ? factor : 1;
+// `<w>x<h>_<hash16>`: FNV-1a 64 over the decoded texels.
+std::string texture_name(uint32_t width, uint32_t height, const void* decoded) {
+    const auto* bytes = static_cast<const uint8_t*>(decoded);
+    const size_t n = static_cast<size_t>(width) * height * 4u;
+    uint64_t hash = 14695981039346656037ull;
+    for (size_t i = 0; i < n; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    char name[64];
+    std::snprintf(name, sizeof(name), "%ux%u_%016llx", width, height,
+                  static_cast<unsigned long long>(hash));
+    return name;
 }
 
-int nds_texture_upscale_factor()
-{
-    return (g_ready || g_factor == 1) ? g_factor : 1;
+std::string lower(std::string s) {
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
 }
 
-bool nds_texture_upscale_ready()
-{
-    return g_ready;
+void scan_pack() {
+    g_pack.clear();
+    if (g_pack_dir.empty()) return;
+    std::error_code error;
+    const std::filesystem::path root = std::filesystem::u8path(g_pack_dir);
+    if (!std::filesystem::is_directory(root, error)) return;
+    // Subfolders are allowed, so authors can group textures by scene.
+    for (std::filesystem::recursive_directory_iterator it(root, error), end;
+         !error && it != end; it.increment(error)) {
+        if (!it->is_regular_file(error)) continue;
+        const std::filesystem::path& path = it->path();
+        if (lower(path.extension().string()) != ".png") continue;
+        g_pack.emplace(lower(path.stem().string()), path);
+    }
 }
 
-bool nds_texture_upscale_init()
-{
-    if (g_factor == 1) return true;
-    if (g_ready) return true;
-    g_program = compile_compute(kUpscaleCompute);
-    if (!g_program) {
-        std::fprintf(stderr,
-            "[texup] texture upscaling unavailable; using native textures\n");
-        g_factor = 1;
+bool read_file(const std::filesystem::path& path, std::vector<uint8_t>* out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    out->assign(std::istreambuf_iterator<char>(in),
+                std::istreambuf_iterator<char>());
+    return !out->empty();
+}
+
+void write_callback(void* context, void* data, int size) {
+    static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data),
+                                                size);
+}
+
+void dump_texture(const std::string& name, uint32_t width, uint32_t height,
+                  const uint8_t* texels) {
+    if (!g_dumped.insert(name).second) return;
+    std::error_code error;
+    const std::filesystem::path dir = std::filesystem::u8path(g_dump_dir);
+    std::filesystem::create_directories(dir, error);
+    const std::filesystem::path path = dir / (name + ".png");
+    if (std::filesystem::exists(path, error)) return;
+    std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4u);
+    for (size_t i = 0; i < rgba.size(); i += 4) {
+        rgba[i] = c6_to_8(texels[i]);
+        rgba[i + 1] = c6_to_8(texels[i + 1]);
+        rgba[i + 2] = c6_to_8(texels[i + 2]);
+        rgba[i + 3] = a5_to_8(texels[i + 3]);
+    }
+    std::ofstream out(path, std::ios::binary);
+    if (!out ||
+        !stbi_write_png_to_func(write_callback, &out, static_cast<int>(width),
+                                static_cast<int>(height), 4, rgba.data(),
+                                static_cast<int>(width * 4u)))
+        std::fprintf(stderr, "[texpack] could not dump %s\n", name.c_str());
+}
+
+void upload_layer(GLuint array, uint32_t width, uint32_t height, uint32_t layer,
+                  const void* texels) {
+    glBindTexture(GL_TEXTURE_2D_ARRAY, array);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(layer),
+                    static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                    1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, texels);
+}
+
+// The pack's image for this texture, resampled to the storage factor and
+// converted to RGB6A5. False when there is none or it does not fit.
+bool load_replacement(const std::string& name, uint32_t width, uint32_t height,
+                      std::vector<uint8_t>* out) {
+    const auto found = g_pack.find(name);
+    if (found == g_pack.end()) return false;
+    std::vector<uint8_t> file;
+    int iw = 0, ih = 0, channels = 0;
+    stbi_uc* image = nullptr;
+    if (read_file(found->second, &file))
+        image = stbi_load_from_memory(file.data(), static_cast<int>(file.size()),
+                                      &iw, &ih, &channels, 4);
+    if (!image) {
+        std::fprintf(stderr, "[texpack] %s: not a readable PNG\n",
+                     name.c_str());
+        g_pack.erase(found);
         return false;
     }
-    g_ready = true;
-    std::fprintf(stderr, "[texup] texture upscaling %dx (xBR-lv2)\n", g_factor);
+    const uint32_t k = static_cast<uint32_t>(iw) / width;
+    if (k == 0 || static_cast<uint32_t>(iw) != width * k ||
+        static_cast<uint32_t>(ih) != height * k) {
+        std::fprintf(stderr,
+                     "[texpack] %s: %dx%d is not a whole multiple of %ux%u\n",
+                     name.c_str(), iw, ih, width, height);
+        stbi_image_free(image);
+        g_pack.erase(found);
+        return false;
+    }
+    const uint32_t f = static_cast<uint32_t>(g_applied);
+    const uint32_t ow = width * f, oh = height * f;
+    out->resize(static_cast<size_t>(ow) * oh * 4u);
+    // Box-average when the image is a whole multiple of the storage, else
+    // the nearest source texel.
+    const uint32_t box = (k >= f && k % f == 0) ? k / f : 0;
+    for (uint32_t y = 0; y < oh; ++y) {
+        for (uint32_t x = 0; x < ow; ++x) {
+            uint32_t sum[4] = {};
+            uint32_t count = 0;
+            if (box) {
+                for (uint32_t by = 0; by < box; ++by)
+                    for (uint32_t bx = 0; bx < box; ++bx) {
+                        const stbi_uc* p =
+                            image + ((static_cast<size_t>(y * box + by) * iw) +
+                                     x * box + bx) * 4u;
+                        for (int c = 0; c < 4; ++c) sum[c] += p[c];
+                        ++count;
+                    }
+            } else {
+                const uint32_t sx = (x * k + k / 2) / f, sy = (y * k + k / 2) / f;
+                const stbi_uc* p =
+                    image + (static_cast<size_t>(sy) * iw + sx) * 4u;
+                for (int c = 0; c < 4; ++c) sum[c] = p[c];
+                count = 1;
+            }
+            uint8_t* d = out->data() + (static_cast<size_t>(y) * ow + x) * 4u;
+            d[0] = c8_to_6(static_cast<uint8_t>(sum[0] / count));
+            d[1] = c8_to_6(static_cast<uint8_t>(sum[1] / count));
+            d[2] = c8_to_6(static_cast<uint8_t>(sum[2] / count));
+            d[3] = a8_to_5(static_cast<uint8_t>(sum[3] / count));
+        }
+    }
+    stbi_image_free(image);
     return true;
 }
 
-void nds_texture_upscale_shutdown()
-{
-    if (g_staging) glDeleteTextures(1, &g_staging);
-    if (g_program) glDeleteProgram(g_program);
-    g_staging = 0;
-    g_program = 0;
-    g_staging_w = 0;
-    g_staging_h = 0;
-    g_ready = false;
+// The DS texels, each repeated factor x factor times.
+void replicate(uint32_t width, uint32_t height, const uint8_t* texels,
+               std::vector<uint8_t>* out) {
+    const uint32_t f = static_cast<uint32_t>(g_applied);
+    const uint32_t ow = width * f;
+    out->resize(static_cast<size_t>(ow) * height * f * 4u);
+    for (uint32_t y = 0; y < height * f; ++y) {
+        const uint8_t* row = texels + static_cast<size_t>(y / f) * width * 4u;
+        uint8_t* d = out->data() + static_cast<size_t>(y) * ow * 4u;
+        for (uint32_t x = 0; x < ow; ++x)
+            std::copy_n(row + (x / f) * 4u, 4, d + x * 4u);
+    }
 }
 
-bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
-                                  uint32_t height, uint32_t layer,
-                                  const void* decoded)
-{
-    if (!g_ready || g_factor == 1 || !decoded || dst_array == 0)
-        return false;
-
+bool run_xbr(GLuint dst_array, uint32_t width, uint32_t height, uint32_t layer,
+             const void* decoded) {
     // The texture cache calls this from inside the renderer's frame setup, so
     // every binding touched here is restored before returning.
     GLint prev_program = 0;
@@ -308,11 +466,11 @@ bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
                        GL_RGBA8UI);
     glUniform2i(0, static_cast<GLint>(width), static_cast<GLint>(height));
     glUniform1i(1, static_cast<GLint>(layer));
-    glUniform1i(2, g_factor);
+    glUniform1i(2, g_applied);
     glUniform1i(3, 0);  // repeat: the DS default wrap for texture coordinates
 
-    const GLuint out_w = width * static_cast<GLuint>(g_factor);
-    const GLuint out_h = height * static_cast<GLuint>(g_factor);
+    const GLuint out_w = width * static_cast<GLuint>(g_applied);
+    const GLuint out_h = height * static_cast<GLuint>(g_applied);
     glDispatchCompute((out_w + 7u) / 8u, (out_h + 7u) / 8u, 1u);
     // The cache's very next action can be a sample from this array.
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT |
@@ -321,5 +479,123 @@ bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
     glUseProgram(static_cast<GLuint>(prev_program));
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex2d));
     glActiveTexture(static_cast<GLenum>(prev_active));
+    return true;
+}
+
+}  // namespace
+
+void nds_texture_upscale_set_factor(int factor)
+{
+    g_factor = (factor == 2 || factor == 4) ? factor : 1;
+}
+
+void nds_texture_set_filter(NdsTextureFilter filter) { g_filter = filter; }
+
+NdsTextureFilter nds_texture_filter() { return g_filter; }
+
+void nds_texture_pack_set_dir(const std::string& dir)
+{
+    g_pack_dir = dir;
+}
+
+bool nds_texture_pack_available()
+{
+    std::error_code error;
+    return !g_pack_dir.empty() &&
+           std::filesystem::is_directory(std::filesystem::u8path(g_pack_dir),
+                                         error);
+}
+
+void nds_texture_pack_set_enabled(bool enabled) { g_pack_enabled = enabled; }
+
+bool nds_texture_pack_enabled() { return g_pack_enabled; }
+
+void nds_texture_dump_set_dir(const std::string& dir)
+{
+    g_dump_dir = dir;
+    g_dumped.clear();
+}
+
+int nds_texture_upscale_apply()
+{
+    const bool pack = g_pack_enabled && nds_texture_pack_available();
+    bool smooth = g_filter == NdsTextureFilter::Smooth;
+    if (smooth && !g_program) {
+        g_program = compile_compute(kUpscaleCompute);
+        if (!g_program) {
+            std::fprintf(stderr,
+                "[texup] xBR filter unavailable; using the DS texels\n");
+            smooth = false;
+        }
+    }
+    g_ready = g_program != 0;
+    const int storage = g_factor > 1 ? g_factor : 4;
+    g_applied = (smooth || pack) ? storage : 1;
+    g_applied_smooth = smooth;
+    g_applied_pack = pack;
+    if (pack) scan_pack();
+    else g_pack.clear();
+    std::fprintf(stderr, "[texup] textures: %s%s, %dx storage%s\n",
+                 smooth ? "smooth (xBR-lv2)" : "original",
+                 pack ? " + texture pack" : "", g_applied,
+                 pack ? (" (" + std::to_string(g_pack.size()) +
+                         " replacements)").c_str()
+                      : "");
+    return g_applied;
+}
+
+int nds_texture_upscale_factor()
+{
+    return g_applied;
+}
+
+bool nds_texture_upscale_ready()
+{
+    return g_ready;
+}
+
+bool nds_texture_upscale_init()
+{
+    nds_texture_upscale_apply();
+    return true;
+}
+
+void nds_texture_upscale_shutdown()
+{
+    if (g_staging) glDeleteTextures(1, &g_staging);
+    if (g_program) glDeleteProgram(g_program);
+    g_staging = 0;
+    g_program = 0;
+    g_staging_w = 0;
+    g_staging_h = 0;
+    g_ready = false;
+}
+
+bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
+                                  uint32_t height, uint32_t layer,
+                                  const void* decoded)
+{
+    if (!decoded || dst_array == 0) return false;
+    const auto* texels = static_cast<const uint8_t*>(decoded);
+    const bool dump = !g_dump_dir.empty();
+    if (dump || g_applied_pack) {
+        const std::string name = lower(texture_name(width, height, decoded));
+        if (dump) dump_texture(name, width, height, texels);
+        if (g_applied_pack) {
+            static std::vector<uint8_t> replacement;
+            if (load_replacement(name, width, height, &replacement)) {
+                upload_layer(dst_array, width * g_applied, height * g_applied,
+                             layer, replacement.data());
+                return true;
+            }
+        }
+    }
+    if (g_applied == 1) return false;
+    if (g_applied_smooth && g_program)
+        return run_xbr(dst_array, width, height, layer, decoded);
+    static std::vector<uint8_t> repeated;
+    replicate(width, height, texels, &repeated);
+    upload_layer(dst_array, width * g_applied, height * g_applied, layer,
+                 repeated.data());
     return true;
 }

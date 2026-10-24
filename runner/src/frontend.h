@@ -279,6 +279,18 @@ struct NdsFrontendOptions {
     // texture once on a cache miss; independent of internal_resolution, but
     // only worth enabling alongside it.
     uint8_t texture_upscale = 1;
+    // How textures are filtered (Esc menu Display > Textures): 0 original DS
+    // texels, 1 smooth (xBR at texture_upscale, or 4x when that is 1), 2 =
+    // follow texture_upscale (> 1 means smooth). TOML texture_filter, then
+    // the runtime settings file, then --texture-filter.
+    uint8_t texture_filter = 2;
+    // Replacement textures (melonds_compute/TextureUpscale.h): the pack
+    // folder, whether it is used (Esc menu Display > Texture pack; on by
+    // default when the folder exists), and a folder that receives every
+    // decoded texture as a PNG, named the way a pack names its files.
+    std::string texture_pack_dir;
+    bool texture_pack = true;
+    std::string texture_dump_dir;
     // Extra presented host frames between DS frames. Purely a presentation
     // knob: see NdsFrameInterpolation. Blend is ignored (with a one-time
     // notice) whenever the direct OpenGL top-screen presenter is active,
@@ -343,6 +355,14 @@ bool nds_parse_screen_layout(const std::string& value,
 // NDS_SCREEN_LAYOUT / --screen-layout overrides.
 bool nds_load_runtime_screen_layout(const std::string& path,
                                     NdsScreenLayout* out);
+// The last `key=` value in the runtime settings file; false when absent.
+bool nds_load_runtime_setting(const std::string& path, const std::string& key,
+                              std::string* out);
+// "original" -> 0, "smooth" -> 1 (NdsFrontendOptions::texture_filter).
+bool nds_parse_texture_filter(const std::string& value, uint8_t* out);
+// Hands the texture options to the texture cache (filter, factor, pack,
+// dump); they take effect when the 3D renderer builds its cache.
+void nds_frontend_apply_texture_options(const NdsFrontendOptions& options);
 // The cartridge's English banner title with the publisher line dropped and
 // the remaining lines joined by spaces (e.g. "Hotel Dusk Room 215"), falling
 // back to the 12-character header title. Printable ASCII only.

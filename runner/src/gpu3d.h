@@ -62,6 +62,11 @@ uint32_t nds_gpu3d_compute_output_texture();
 // out-of-range scale (valid range 1..4).
 bool nds_gpu3d_set_internal_scale(uint8_t scale);
 bool nds_gpu3d_set_runtime_internal_scale(uint8_t scale);
+// Rebuilds the active accelerated renderer at its current scale, so texture
+// settings (filter, texture pack) take effect; the soft renderer ignores it.
+bool nds_gpu3d_rebuild_renderer();
+// Whether the accelerated (compute) renderer is the active one.
+bool nds_gpu3d_is_accelerated();
 uint8_t nds_gpu3d_internal_scale();
 void nds_gpu3d_set_display_readback_latency(bool enabled);
 bool nds_gpu3d_display_readback_latency();
