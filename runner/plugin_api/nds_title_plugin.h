@@ -155,7 +155,13 @@ typedef struct NdsTitleDraw {
     void (*draw)(int source, const float* src, const float* dst, float degrees,
                  float alpha, int flags);
     void (*fill)(const float* dst, uint32_t argb);
+    /* Limit the draws and fills that follow to `rect` {x, y, w, h} in canvas
+     * pixels (e.g. a rotated map inside its panel); NULL lifts the limit.
+     * Lifted again when present returns. */
+    void (*clip)(const float* rect);
 } NdsTitleDraw;
+/* NdsTitleDraw has `clip`. */
+#define NDS_DRAW_HAS_CLIP 1
 
 typedef struct NdsTitlePlugin {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
