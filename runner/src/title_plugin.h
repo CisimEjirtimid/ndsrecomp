@@ -21,6 +21,10 @@ void nds_title_plugin_latch_touch(uint16_t x, uint16_t y, bool down);
 // The D-pad relative to the screen as shown (before book-layout turning).
 // nds_set_key_mask resets it to the guest D-pad; the frontend overrides it.
 void nds_set_screen_dpad(uint16_t pressed);
+// Analog sticks (dead zone applied, -1..1) and mouse motion (accumulated
+// until the next VBlank) / buttons (NDS_MOUSE_*), for NdsTitleInput.
+void nds_title_plugin_latch_sticks(float lx, float ly, float rx, float ry);
+void nds_title_plugin_latch_mouse(float dx, float dy, uint8_t buttons);
 
 // VBlank start, before the VBlank IRQ: run the plugin and apply its input.
 void nds_title_plugin_vblank();

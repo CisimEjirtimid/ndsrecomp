@@ -132,10 +132,26 @@ void nds_title_plugin_latch_touch(uint16_t x, uint16_t y, bool down) {
     g_host.touch_y = down ? y : 0u;
 }
 
+void nds_title_plugin_latch_sticks(float lx, float ly, float rx, float ry) {
+    g_host.stick[0][0] = lx;
+    g_host.stick[0][1] = ly;
+    g_host.stick[1][0] = rx;
+    g_host.stick[1][1] = ry;
+}
+
+void nds_title_plugin_latch_mouse(float dx, float dy, uint8_t buttons) {
+    g_host.mouse_dx += dx;
+    g_host.mouse_dy += dy;
+    g_host.mouse_buttons = buttons;
+}
+
 void nds_title_plugin_vblank() {
     if (!g_plugin) return;
     ++g_frame;
     NdsTitleInput io = g_host;
+    // Motion is per frame: what moved since the last VBlank.
+    g_host.mouse_dx = 0.0f;
+    g_host.mouse_dy = 0.0f;
     if (g_plugin->frame) g_plugin->frame(&kHost, &io);
     nds_apply_guest_keys(static_cast<uint16_t>(0x0FFFu & ~io.keys));
     nds_apply_guest_touch(io.touch_x, io.touch_y, io.touch_down != 0);
