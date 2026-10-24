@@ -32,6 +32,7 @@
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 #include "GPU3D_Compute.h"
 #include "ComputeHost.h"
+#include "melonds_compute/TextureUpscale.h"
 #endif
 
 namespace {
@@ -679,6 +680,57 @@ bool nds_gpu3d_set_internal_scale(uint8_t scale) {
     return true;
 }
 
+#if defined(NDS_HAVE_COMPUTE_RENDERER)
+namespace {
+
+// A fresh compute renderer at `scale`, with the texture settings applied to
+// its new texture cache.
+bool rebuild_compute_renderer(uint8_t scale) {
+    // A terminal compute failure is not something a rebuild gets to erase:
+    // nds_gpu3d_use_compute_renderer() clears g_compute_runtime_failed, and
+    // the run is already unwinding on that flag. Refuse instead, which routes
+    // the caller into its own terminal state.
+    if (g_compute_runtime_failed) return false;
+    if (!nds_compute_host_make_current()) return false;
+    const uint8_t previous = g_internal_scale;
+    if (g_compute_readback_pending) compute_finish_readback();
+    glFinish();
+    g_internal_scale = scale;
+    // The factor sizes the new cache's texture arrays.
+    nds_texture_upscale_apply();
+    if (!nds_gpu3d_use_compute_renderer()) {
+        g_internal_scale = previous;
+        return false;
+    }
+    // Same sequence gpu3d_savestate_import() uses after installing a fresh
+    // renderer. Without it ComputeRenderer::RenderFrame early-returns on a
+    // static scene (!Texcache.Update() && RenderFrameIdentical), so the new
+    // renderer never writes its output and the 3D layer stays black until
+    // texture VRAM happens to be dirtied.
+    g_nds.GPU.GPU3D.GetCurrentRenderer().Reset(g_nds.GPU);
+    g_nds.GPU.GPU3D.RenderFrameIdentical = false;
+    return true;
+}
+
+}  // namespace
+#endif
+
+bool nds_gpu3d_is_accelerated() {
+    return g_nds.GPU.GPU3D.IsRendererAccelerated();
+}
+
+bool nds_gpu3d_rebuild_renderer() {
+#if defined(NDS_HAVE_COMPUTE_RENDERER)
+    auto* renderer = dynamic_cast<melonDS::ComputeRenderer*>(
+        &g_nds.GPU.GPU3D.GetCurrentRenderer());
+    if (!renderer) return true;  // the soft renderer has no texture cache
+    return rebuild_compute_renderer(
+        static_cast<uint8_t>(renderer->GetScaleFactor()));
+#else
+    return true;
+#endif
+}
+
 bool nds_gpu3d_set_runtime_internal_scale(uint8_t scale) {
     if (scale < 1u || scale > kMaxInternalScale) return false;
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
@@ -692,28 +744,7 @@ bool nds_gpu3d_set_runtime_internal_scale(uint8_t scale) {
         g_internal_scale = scale;
         return true;
     }
-    // A terminal compute failure is not something a rebuild gets to erase:
-    // nds_gpu3d_use_compute_renderer() clears g_compute_runtime_failed, and
-    // the run is already unwinding on that flag. Refuse instead, which routes
-    // the caller into its own terminal state.
-    if (g_compute_runtime_failed) return false;
-    if (!nds_compute_host_make_current()) return false;
-    const uint8_t previous = g_internal_scale;
-    if (g_compute_readback_pending) compute_finish_readback();
-    glFinish();
-    g_internal_scale = scale;
-    if (!nds_gpu3d_use_compute_renderer()) {
-        g_internal_scale = previous;
-        return false;
-    }
-    // Same sequence gpu3d_savestate_import() uses after installing a fresh
-    // renderer. Without it ComputeRenderer::RenderFrame early-returns on a
-    // static scene (!Texcache.Update() && RenderFrameIdentical), so the new
-    // renderer never writes its output and the 3D layer stays black until
-    // texture VRAM happens to be dirtied.
-    g_nds.GPU.GPU3D.GetCurrentRenderer().Reset(g_nds.GPU);
-    g_nds.GPU.GPU3D.RenderFrameIdentical = false;
-    return true;
+    return rebuild_compute_renderer(scale);
 #else
     // Nothing to scale: this build has no accelerated renderer, so the only
     // raster is the native soft one. Report success so a governor stage (or a

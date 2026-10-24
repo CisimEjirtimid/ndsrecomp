@@ -73,6 +73,22 @@ bool nds_load_runtime_screen_layout(const std::string& path,
     return found;
 }
 
+bool nds_load_runtime_setting(const std::string& path, const std::string& key,
+                              std::string* out) {
+    if (path.empty() || !out) return false;
+    std::ifstream in(path);
+    std::string line;
+    bool found = false;
+    const std::string prefix = key + "=";
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.compare(0, prefix.size(), prefix) != 0) continue;
+        *out = line.substr(prefix.size());
+        found = true;
+    }
+    return found;
+}
+
 std::string nds_rom_banner_title(const uint8_t* rom, size_t size) {
     // Banner offset at header 0x68; the English title is 128 UTF-16LE
     // characters at banner + 0x340, lines separated by '\n'.
@@ -200,6 +216,14 @@ bool nds_parse_internal_resolution(const std::string& value, uint8_t* out) {
     const long parsed = std::strtol(value.c_str(), &end, 10);
     if (!end || *end != '\0' || parsed < 1 || parsed > 4) return false;
     *out = static_cast<uint8_t>(parsed);
+    return true;
+}
+
+bool nds_parse_texture_filter(const std::string& value, uint8_t* out) {
+    if (!out) return false;
+    if (value == "original") *out = 0;
+    else if (value == "smooth") *out = 1;
+    else return false;
     return true;
 }
 
@@ -751,6 +775,16 @@ bool nds_load_frontend_config(const std::string& path,
             if (!nds_parse_texture_upscale(std::to_string(*value),
                                            &options->texture_upscale)) {
                 if (error) *error = "display.texture_upscale must be 1, 2, or 4";
+                return false;
+            }
+        }
+        if (const auto value =
+                (*display)["texture_filter"].value<std::string>()) {
+            if (!nds_parse_texture_filter(*value, &options->texture_filter)) {
+                if (error) {
+                    *error =
+                        "display.texture_filter must be original or smooth";
+                }
                 return false;
             }
         }

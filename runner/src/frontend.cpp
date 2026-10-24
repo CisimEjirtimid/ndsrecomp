@@ -1178,6 +1178,8 @@ uint64_t framebuffer_rgb_fnv(int screen) {
 constexpr const char* kRuntimeMouseSensitivityKey =
     "input.mouse_sensitivity";
 constexpr const char* kRuntimeScreenLayoutKey = "display.screen_layout";
+constexpr const char* kRuntimeTextureFilterKey = "display.texture_filter";
+constexpr const char* kRuntimeTexturePackKey = "display.texture_pack";
 constexpr const char* kRuntimeResumeKey = "system.resume";
 constexpr const char* kRuntimeQuitKey = "system.quit";
 
@@ -1190,7 +1192,29 @@ struct RuntimeMenuState {
     // The player picked a layout this session, so it is saved; launchers
     // that never offer the choice never see the key.
     bool layout_chosen = false;
+    // Texture filter or pack changed: the loop rebuilds the 3D renderer.
+    bool textures_changed = false;
+    bool textures_chosen = false;
 };
+
+bool texture_filter_smooth(const NdsFrontendOptions& options) {
+    return options.texture_filter == 2 ? options.texture_upscale > 1
+                                       : options.texture_filter == 1;
+}
+
+}  // namespace
+
+void nds_frontend_apply_texture_options(const NdsFrontendOptions& options) {
+    nds_texture_upscale_set_factor(options.texture_upscale);
+    nds_texture_set_filter(texture_filter_smooth(options)
+                               ? NdsTextureFilter::Smooth
+                               : NdsTextureFilter::Original);
+    nds_texture_pack_set_dir(options.texture_pack_dir);
+    nds_texture_pack_set_enabled(options.texture_pack);
+    nds_texture_dump_set_dir(options.texture_dump_dir);
+}
+
+namespace {
 
 // Rewrite one key=value line of the launcher's runtime settings file,
 // keeping every other line.
@@ -1247,6 +1271,14 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
         *value_out = static_cast<int>(state->options->screen_layout);
         return 1;
     }
+    if (std::strcmp(item->key, kRuntimeTextureFilterKey) == 0) {
+        *value_out = texture_filter_smooth(*state->options) ? 1 : 0;
+        return 1;
+    }
+    if (std::strcmp(item->key, kRuntimeTexturePackKey) == 0) {
+        *value_out = state->options->texture_pack ? 1 : 0;
+        return 1;
+    }
     return 0;
 }
 
@@ -1268,6 +1300,20 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
         state->options->screen_layout = static_cast<NdsScreenLayout>(value);
         state->layout_changed = true;
         state->layout_chosen = true;
+        return 1;
+    }
+    if (std::strcmp(item->key, kRuntimeTextureFilterKey) == 0) {
+        if (value < 0 || value > 1) return 0;
+        state->options->texture_filter = static_cast<uint8_t>(value);
+        state->textures_changed = true;
+        state->textures_chosen = true;
+        return 1;
+    }
+    if (std::strcmp(item->key, kRuntimeTexturePackKey) == 0) {
+        if (value < 0 || value > 1) return 0;
+        state->options->texture_pack = value != 0;
+        state->textures_changed = true;
+        state->textures_chosen = true;
         return 1;
     }
     return 0;
@@ -1292,6 +1338,13 @@ int runtime_menu_is_enabled(void* context, const RecompRuntimeUiItem* item) {
     if (!state || !state->options || !item) return 0;
     if (std::strcmp(item->key, kRuntimeMouseSensitivityKey) == 0)
         return state->options->relative_mouse_touch ? 1 : 0;
+    // Textures live in the accelerated renderer's cache; a pack needs its
+    // folder.
+    if (std::strcmp(item->key, kRuntimeTextureFilterKey) == 0)
+        return nds_gpu3d_is_accelerated() ? 1 : 0;
+    if (std::strcmp(item->key, kRuntimeTexturePackKey) == 0)
+        return nds_gpu3d_is_accelerated() && nds_texture_pack_available() ? 1
+                                                                          : 0;
     return 1;
 }
 
@@ -1305,7 +1358,14 @@ void runtime_menu_save(void* context) {
         (!state->layout_chosen ||
          save_runtime_setting(
              path, "screen_layout",
-             nds_screen_layout_name(state->options->screen_layout)))) {
+             nds_screen_layout_name(state->options->screen_layout))) &&
+        (!state->textures_chosen ||
+         (save_runtime_setting(
+              path, "texture_filter",
+              texture_filter_smooth(*state->options) ? "smooth"
+                                                     : "original") &&
+          save_runtime_setting(path, "texture_pack",
+                               state->options->texture_pack ? "on" : "off")))) {
         std::fprintf(stderr, "[sdl] saved runtime settings\n");
     }
 }
@@ -2794,7 +2854,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // something can consume them.
     nds_gpu2d_set_hd_emit(initial_internal_resolution > 1 &&
                           presentation.gl_top);
-    nds_texture_upscale_set_factor(options.texture_upscale);
+    nds_frontend_apply_texture_options(options);
 
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
     // Activate only after every fallible visible-frontend allocation. From
@@ -3030,10 +3090,21 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // Indexed by NdsScreenLayout.
     static const char* const runtime_layout_choices[] = {
         "Stacked", "Separate windows", "Book", "Book (left-handed)"};
+    static const char* const runtime_texture_filter_choices[] = {
+        "Original", "Smooth"};
+    static const char* const runtime_off_on_choices[] = {"Off", "On"};
     static const RecompRuntimeUiItem runtime_menu_items[] = {
         {kRuntimeScreenLayoutKey, "Display", "Screen layout",
          "Book turns screens for sideways play.",
          RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, runtime_layout_choices, 4,
+         nullptr},
+        {kRuntimeTextureFilterKey, "Display", "Textures",
+         "Original keeps the DS texels sharp; Smooth filters them (xBR).",
+         RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, runtime_texture_filter_choices, 2,
+         nullptr},
+        {kRuntimeTexturePackKey, "Display", "Texture pack",
+         "Replacement textures from the texture pack folder.",
+         RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, runtime_off_on_choices, 2,
          nullptr},
         {kRuntimeMouseSensitivityKey, "Input", "Mouse sensitivity",
          "Relative-mouse stylus and aim speed.",
@@ -3447,6 +3518,14 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
         if (runtime_menu_state.close_requested) {
             runtime_menu_state.close_requested = false;
             if (runtime_ui) recomp_runtime_ui_close(runtime_ui);
+        }
+        if (runtime_menu_state.textures_changed) {
+            runtime_menu_state.textures_changed = false;
+            // A fresh 3D renderer builds a new texture cache with the new
+            // filter, factor and pack (a short hitch, like a governor step).
+            nds_frontend_apply_texture_options(options);
+            if (!nds_gpu3d_rebuild_renderer())
+                std::fprintf(stderr, "[sdl] texture change failed\n");
         }
         if (runtime_menu_state.layout_changed) {
             runtime_menu_state.layout_changed = false;

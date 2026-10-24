@@ -401,6 +401,9 @@ int main(int argc, char** argv) {
     std::string cli_supersampling;
     std::string cli_internal_resolution;
     std::string cli_texture_upscale;
+    std::string cli_texture_filter;
+    std::string cli_texture_pack;
+    std::string cli_texture_dump;
     std::string cli_antialiasing;
     std::string cli_frame_interpolation;
     std::string cli_relative_mouse_touch;
@@ -544,6 +547,12 @@ int main(int argc, char** argv) {
             cli_internal_resolution = argv[++i];
         } else if (a == "--texture-upscale" && i + 1 < argc) {
             cli_texture_upscale = argv[++i];
+        } else if (a == "--texture-filter" && i + 1 < argc) {
+            cli_texture_filter = argv[++i];
+        } else if (a == "--texture-pack" && i + 1 < argc) {
+            cli_texture_pack = argv[++i];
+        } else if (a == "--texture-dump" && i + 1 < argc) {
+            cli_texture_dump = argv[++i];
         } else if (a == "--antialiasing" && i + 1 < argc) {
             cli_antialiasing = argv[++i];
         } else if (a == "--frame-interpolation" && i + 1 < argc) {
@@ -694,6 +703,8 @@ int main(int argc, char** argv) {
                 "[--supersampling 1|2|3|4] "
                 "[--internal-resolution 1|2|3|4] "
                 "[--texture-upscale 1|2|4] "
+                "[--texture-filter original|smooth] "
+                "[--texture-pack DIR] [--texture-dump DIR] "
                 "[--antialiasing 0|2|4|8] "
                 "[--frame-interpolation off|blend] "
                 "[--relative-mouse-touch on|off] "
@@ -773,6 +784,16 @@ int main(int argc, char** argv) {
     // TOML default; NDS_SCREEN_LAYOUT and --screen-layout below still win.
     nds_load_runtime_screen_layout(cli_runtime_settings_path,
                                    &frontend_options.screen_layout);
+    // Likewise the texture choices from the runtime menu.
+    {
+        std::string value;
+        if (nds_load_runtime_setting(cli_runtime_settings_path,
+                                     "texture_filter", &value))
+            nds_parse_texture_filter(value, &frontend_options.texture_filter);
+        if (nds_load_runtime_setting(cli_runtime_settings_path,
+                                     "texture_pack", &value))
+            frontend_options.texture_pack = value != "off";
+    }
     NdsFullscreenOverrideError fullscreen_error =
         NdsFullscreenOverrideError::None;
     if (!nds_apply_fullscreen_overrides(
@@ -961,6 +982,18 @@ int main(int argc, char** argv) {
                      "invalid --supersampling (expected 1..4)\n");
         return 2;
     }
+    if (!cli_texture_filter.empty() &&
+        !nds_parse_texture_filter(cli_texture_filter,
+                                  &frontend_options.texture_filter)) {
+        std::fprintf(stderr,
+                     "invalid --texture-filter (expected original or "
+                     "smooth)\n");
+        return 2;
+    }
+    if (!cli_texture_pack.empty())
+        frontend_options.texture_pack_dir = cli_texture_pack;
+    if (!cli_texture_dump.empty())
+        frontend_options.texture_dump_dir = cli_texture_dump;
     if (!cli_texture_upscale.empty() &&
         !nds_parse_texture_upscale(cli_texture_upscale,
                                    &frontend_options.texture_upscale)) {
@@ -2303,7 +2336,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!interactive)
-        nds_texture_upscale_set_factor(frontend_options.texture_upscale);
+        nds_frontend_apply_texture_options(frontend_options);
     if (!interactive && !nds_compute_host_start()) return 1;
 #endif
 

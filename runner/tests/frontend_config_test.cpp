@@ -86,6 +86,40 @@ int main() {
             return 42;
     }
 
+    {
+        // Texture filter names and the runtime menu's saved choices.
+        uint8_t filter = 2;
+        if (!require(nds_parse_texture_filter("original", &filter)) ||
+            !require(filter == 0) ||
+            !require(nds_parse_texture_filter("smooth", &filter)) ||
+            !require(filter == 1) ||
+            !require(!nds_parse_texture_filter("xbr", &filter)) ||
+            !require(filter == 1))
+            return 43;
+        const std::filesystem::path settings =
+            std::filesystem::temp_directory_path() /
+            "ndsrecomp_runtime_texture_test.txt";
+        {
+            std::ofstream out(settings);
+            out << "texture_filter=smooth\r\ntexture_pack=off\r\n"
+                   "texture_filter=original\n";
+        }
+        std::string value, pack, missing;
+        const bool loaded =
+            nds_load_runtime_setting(settings.string(), "texture_filter",
+                                     &value);
+        const bool pack_loaded =
+            nds_load_runtime_setting(settings.string(), "texture_pack", &pack);
+        const bool absent =
+            nds_load_runtime_setting(settings.string(), "texture", &missing);
+        std::filesystem::remove(settings);
+        // The last value wins; a key is never matched by its prefix.
+        if (!require(loaded) || !require(value == "original") ||
+            !require(pack_loaded) || !require(pack == "off") ||
+            !require(!absent))
+            return 44;
+    }
+
     NdsFullscreenMode fullscreen = NdsFullscreenMode::Off;
     if (!require(nds_parse_fullscreen_mode("off", &fullscreen)) ||
         !require(fullscreen == NdsFullscreenMode::Off) ||
