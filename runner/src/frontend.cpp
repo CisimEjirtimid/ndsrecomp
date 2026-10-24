@@ -2255,6 +2255,10 @@ struct PluginCanvas {
     // NDS_DRAW_3D: uploaded once per presented frame, on first use.
     SDL_Texture* wide3d = nullptr;
     int wide3d_w = 0, wide3d_h = 0;
+    // The wide images' widths in DS pixels when last uploaded: a KEEP draw
+    // maps its source rectangle with these, not the 3D engine's width now
+    // (a plugin that stopped widening the view still shows the old image).
+    int wide3d_ds_w = 0, wide3d_blend_ds_w = 0;
     bool wide3d_fresh = false;
     // NDS_DRAW_3D_BLEND: the current and previous rendered frames (CPU
     // copies, kept only while the plugin draws this source) and their mix.
@@ -2395,8 +2399,9 @@ SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
             SDL_UpdateTexture(g_canvas.wide3d, nullptr, pixels,
                               static_cast<int>(iw * sizeof(uint32_t)));
             g_canvas.wide3d_fresh = true;
+            g_canvas.wide3d_ds_w = nds_gpu3d_output_width();
         }
-        *w = nds_gpu3d_output_width();
+        *w = g_canvas.wide3d_ds_w;
         *h = kScreenHeight;
         return g_canvas.wide3d;
     }
@@ -2405,8 +2410,9 @@ SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
             !(keep && g_canvas.wide3d_blend)) {
             if (!upload_wide_blend()) return nullptr;
             g_canvas.wide3d_blend_fresh = true;
+            g_canvas.wide3d_blend_ds_w = nds_gpu3d_output_width();
         }
-        *w = nds_gpu3d_output_width();
+        *w = g_canvas.wide3d_blend_ds_w;
         *h = kScreenHeight;
         return g_canvas.wide3d_blend;
     }
@@ -2437,6 +2443,15 @@ SDL_Texture* plugin_source(int source, int* w, int* h, bool keep = false) {
 
 int plugin_source_size(int source, int* w, int* h) {
     int sw = 0, sh = 0;
+    if (source == NDS_DRAW_3D || source == NDS_DRAW_3D_BLEND) {
+        // The size alone: uploading here would replace an image the plugin
+        // keeps on screen (NDS_DRAW_KEEP) with this frame's.
+        const int width = nds_gpu3d_output_width();
+        if (width <= 0) return 0;
+        if (w) *w = width;
+        if (h) *h = kScreenHeight;
+        return 1;
+    }
     if (!plugin_source(source, &sw, &sh)) return 0;
     if (w) *w = sw;
     if (h) *h = sh;
