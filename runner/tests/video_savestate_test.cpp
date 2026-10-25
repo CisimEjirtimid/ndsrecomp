@@ -271,9 +271,32 @@ bool gpu3d_rendered_projection_flag_follows_submitted_geometry() {
 
 }  // namespace
 
+// Every vertex since BEGIN_VTXS counts (VertexNum); a strip of many
+// triangles passes four long before the next BEGIN, and must still save.
+bool gpu3d_long_vertex_list_saves() {
+    uint64_t cycles = 0;
+    nds_gpu3d_reset();
+    nds_gpu3d_set_power((1u << 2u) | (1u << 3u));
+    gpu3d_run_for(cycles);
+    gpu3d_cmd(0x29u, (31u << 16u) | (1u << 6u) | (1u << 7u), cycles);
+    gpu3d_cmd(0x40u, 2u, cycles);  // triangle strip
+    for (int i = 0; i < 8; ++i) {
+        gpu3d_fifo_write(0x23u, cycles);
+        gpu3d_fifo_write(pack_i16(static_cast<int16_t>(-0x0400 + i * 0x0100),
+                                  (i & 1) ? 0x0400 : -0x0400), cycles);
+        gpu3d_fifo_write(0x0000u, cycles);
+    }
+    std::string error;
+    NdsGpu3dSaveState saved{};
+    return expect(gpu3d_savestate_export(&saved, &error), error.c_str()) &&
+        expect(gpu3d_savestate_validate(saved, &error),
+               "a long vertex list since BEGIN_VTXS validates");
+}
+
 int main() {
     bool ok = vram_and_midframe_capture_roundtrip();
     ok &= gpu3d_device_roundtrip();
     ok &= gpu3d_rendered_projection_flag_follows_submitted_geometry();
+    ok &= gpu3d_long_vertex_list_saves();
     return ok ? 0 : 1;
 }
