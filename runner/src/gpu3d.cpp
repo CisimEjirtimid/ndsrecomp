@@ -87,10 +87,12 @@ bool validate_gpu3d_device(const melonDS::GPU3D& gpu,
         gpu.PosMatrixStackPointer > 63 ||
         gpu.TexMatrixStackPointer < 0 ||
         gpu.TexMatrixStackPointer > 1 ||
-        gpu.MatrixMode > 3u || gpu.VertexNum > 4u ||
+        gpu.MatrixMode > 3u ||
         gpu.VertexNumInPoly > 10u || gpu.ExecParamCount > 32u ||
         gpu.ParamCount > 32u || gpu.TotalParams > 32u)
         return fail("savestate GPU3D command state is invalid");
+    // VertexNum is not checked: it counts every vertex since BEGIN_VTXS
+    // (melonDS never reads it back), so any value is reachable.
     const melonDS::Vertex* expected_vertex =
         &gpu.VertexRAM[gpu.CurRAMBank ? 6144u : 0u];
     const melonDS::Polygon* expected_polygon =
@@ -795,6 +797,9 @@ uint32_t nds_gpu3d_compute_output_texture_hires() {
 #endif
 }
 
+// What nds_gpu3d_read_hires() returns (empty without the compute renderer).
+std::vector<uint8_t> g_hires_copy;
+
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 // Hi-res readback for the HD display-capture path: queued into a pack buffer
 // right after each frame is rasterized at VCount 215, and consumed at the
@@ -806,7 +811,6 @@ size_t g_hires_pbo_bytes = 0;
 GLsync g_hires_fence = nullptr;
 uint32_t g_hires_width = 0;
 uint32_t g_hires_height = 0;
-std::vector<uint8_t> g_hires_copy;
 
 bool hires_extent(uint32_t* width, uint32_t* height) {
     if (!nds_gpu3d_compute_output_texture_hires()) return false;
