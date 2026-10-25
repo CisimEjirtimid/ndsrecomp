@@ -1777,7 +1777,16 @@ int main(int argc, char** argv) {
             : std::filesystem::path(rom_path).filename().string();
     nds_diagnostics_set_identity(rom_sha1.c_str(), rom_name.c_str(),
                                  NDS_RUNNER_BUILD_ID);
-    debug_set_savestate_identity(NDS_RUNNER_BUILD_ID, rom_sha1);
+    // Savestate identity: build-exact, unless NDS_SAVESTATE_BUILD_ID
+    // overrides it (see the frontend's savestate directory below); the debug
+    // server's state_save/state_load and the window share it, so a state
+    // saved headless opens with --load-state.
+    const char* savestate_id_override = std::getenv("NDS_SAVESTATE_BUILD_ID");
+    const std::string savestate_build_id =
+        (savestate_id_override && savestate_id_override[0])
+            ? savestate_id_override
+            : NDS_RUNNER_BUILD_ID;
+    debug_set_savestate_identity(savestate_build_id, rom_sha1);
     {
         // The built-in title plugin (opt-in presentation/input layer) is on
         // by default for its own cartridge; --title-plugin off (or
@@ -1817,12 +1826,7 @@ int main(int argc, char** argv) {
         // reports the real NDS_RUNNER_BUILD_ID, so perf bundles never lie
         // about what code ran. Unset (the norm, and every shipped launcher)
         // this is byte-for-byte the old behaviour.
-        const char* savestate_id_override =
-            std::getenv("NDS_SAVESTATE_BUILD_ID");
-        frontend_options.savestate_build_id =
-            (savestate_id_override && savestate_id_override[0])
-                ? savestate_id_override
-                : NDS_RUNNER_BUILD_ID;
+        frontend_options.savestate_build_id = savestate_build_id;
         frontend_options.savestate_rom_sha1 = rom_sha1;
     }
     nds_diagnostics_set_versions(NDS_FRAMEWORK_VERSION, NDS_GAME_VERSION);
