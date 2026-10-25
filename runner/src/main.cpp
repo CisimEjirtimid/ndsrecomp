@@ -468,6 +468,7 @@ int main(int argc, char** argv) {
     std::string cli_live_overlay_command;
     std::string cli_live_overlay_cache;
     std::string cli_savestate_dir;
+    std::string cli_load_state;
     std::string cli_perf_governor;
     uint64_t budget = 4000000ull;
     bool serve = false;
@@ -681,6 +682,8 @@ int main(int argc, char** argv) {
             cli_live_overlay_cache = argv[++i];
         } else if (a == "--savestate-dir" && i + 1 < argc) {
             cli_savestate_dir = argv[++i];
+        } else if (a == "--load-state" && i + 1 < argc) {
+            cli_load_state = argv[++i];
         } else if (a == "--performance-governor" && i + 1 < argc) {
             cli_perf_governor = argv[++i];
         } else if (a == "--help" || a == "-h") {
@@ -748,7 +751,7 @@ int main(int argc, char** argv) {
                 "[--live-overlay-activation-delay-ms N] "
                 "[--live-overlay-auto-delay-ms N] "
                 "[--live-overlay-auto-cooldown-ms N] "
-                "[--savestate-dir DIR] "
+                "[--savestate-dir DIR] [--load-state FILE] "
                 "[--performance-governor auto|off|stage1|stage2] "
                 "[--force-tier3 | NDS_FORCE_TIER3=1]\n",
                 argv[0]);
@@ -1799,9 +1802,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[hle] MKDS native vector math selected at build time\n");
     }
 #endif
-    if (!cli_savestate_dir.empty() && !rom_sha1.empty()) {
-        frontend_options.savestate_directory =
-            (std::filesystem::path(cli_savestate_dir) / rom_sha1).string();
+    if ((!cli_savestate_dir.empty() || !cli_load_state.empty()) &&
+        !rom_sha1.empty()) {
+        if (!cli_savestate_dir.empty())
+            frontend_options.savestate_directory =
+                (std::filesystem::path(cli_savestate_dir) / rom_sha1).string();
+        frontend_options.startup_state_path = cli_load_state;
         // Measurement escape hatch: savestate identity is build-exact
         // (savestate.cpp load refuses any other build id), which is right for
         // players but makes a cross-build A/B on a pinned state impossible --

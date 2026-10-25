@@ -3741,6 +3741,66 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     std::string savestate_notice;
     uint64_t savestate_notice_until = 0;
 
+    // After a savestate load (F-key slot or --load-state): the governor stage,
+    // caches and live input come back to the host.
+    auto after_state_load = [&]() {
+        // gpu3d_savestate_import() clears the readback-latency
+        // flag as part of installing a fresh renderer, so the
+        // live stage has to be re-established. Skipped once the
+        // governor is terminally disabled: the installed state
+        // is then whatever survived the failure.
+        if (!perf_governor.apply_failed &&
+            options.perf_governor_mode !=
+                NdsPerfGovernorMode::Off &&
+            !apply_performance_governor_stage(
+                options, presentation,
+                perf_governor.stage)) {
+            nds_perf_governor_mark_apply_failed(
+                &perf_governor);
+            nds_perf_governor_record_transition(
+                perf_governor.stage, perf_governor.stage,
+                NdsPerfGovernorReason::ApplyFailed,
+                shown_frames, perf_governor.stage2_held,
+                true);
+            nds_diagnostics_note_perf_governor_transition(
+                perf_governor.stage, perf_governor.stage,
+                "apply_failed");
+        }
+        blend_cache.valid = false;
+        // A load re-primes the machine, so it also opens a new
+        // digest epoch: it is the only alignment point two
+        // independently launched processes share, since
+        // shown_frames at load time is wall-clock dependent.
+        ++g_frame_digest_epoch;
+        // Guest input registers came from historical state;
+        // the live host controls become authoritative again
+        // before the restored machine executes a round.
+        publish_keys();
+        if (mouse_down) {
+            set_touch_from_mouse(
+                static_cast<float>(last_touch_event_x),
+                static_cast<float>(last_touch_event_y),
+                true, touch_mapping);
+        } else {
+            nds_set_touch(0, 0, false);
+        }
+    };
+    if (!options.startup_state_path.empty()) {
+        std::string error;
+        const bool loaded =
+            nds_savestate_check_eligibility(&error) &&
+            nds_savestate_load_core(
+                options.startup_state_path,
+                {options.savestate_build_id, options.savestate_rom_sha1}, &error);
+        std::fprintf(stderr, "[savestate] %s %s%s%s\n",
+                     loaded ? "loaded" : "could not load",
+                     options.startup_state_path.c_str(), loaded ? "" : ": ",
+                     loaded ? "" : error.c_str());
+        if (loaded) {
+            nds_savestate_reset_host_history();
+            after_state_load();
+        }
+    }
     while (running) {
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
         if (!nds_compute_host_make_current()) {
@@ -4054,48 +4114,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                         state_command.slot, result.success);
                     if (result.success &&
                         state_command.action ==
-                            NdsSavestateSlotAction::Load) {
-                        // gpu3d_savestate_import() clears the readback-latency
-                        // flag as part of installing a fresh renderer, so the
-                        // live stage has to be re-established. Skipped once the
-                        // governor is terminally disabled: the installed state
-                        // is then whatever survived the failure.
-                        if (!perf_governor.apply_failed &&
-                            options.perf_governor_mode !=
-                                NdsPerfGovernorMode::Off &&
-                            !apply_performance_governor_stage(
-                                options, presentation,
-                                perf_governor.stage)) {
-                            nds_perf_governor_mark_apply_failed(
-                                &perf_governor);
-                            nds_perf_governor_record_transition(
-                                perf_governor.stage, perf_governor.stage,
-                                NdsPerfGovernorReason::ApplyFailed,
-                                shown_frames, perf_governor.stage2_held,
-                                true);
-                            nds_diagnostics_note_perf_governor_transition(
-                                perf_governor.stage, perf_governor.stage,
-                                "apply_failed");
-                        }
-                        blend_cache.valid = false;
-                        // A load re-primes the machine, so it also opens a new
-                        // digest epoch: it is the only alignment point two
-                        // independently launched processes share, since
-                        // shown_frames at load time is wall-clock dependent.
-                        ++g_frame_digest_epoch;
-                        // Guest input registers came from historical state;
-                        // the live host controls become authoritative again
-                        // before the restored machine executes a round.
-                        publish_keys();
-                        if (mouse_down) {
-                            set_touch_from_mouse(
-                                static_cast<float>(last_touch_event_x),
-                                static_cast<float>(last_touch_event_y),
-                                true, touch_mapping);
-                        } else {
-                            nds_set_touch(0, 0, false);
-                        }
-                    }
+                            NdsSavestateSlotAction::Load)
+                        after_state_load();
                 } else if (scancode == SDL_SCANCODE_ESCAPE) {
                     if (relative_mouse.captured() || virtual_stylus_active())
                         release_relative_mouse();
