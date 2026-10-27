@@ -2568,10 +2568,27 @@ void GPU3D::VBlank() noexcept
                     return false;
                 };
                 HostFrameTextures.resize(NumPolygons * 2);
+                HostFramePolygons.resize(NumPolygons);
                 for (u32 i = 0; i < NumPolygons; i++)
                 {
-                    HostFrameTextures[i * 2] = CurPolygonRAM[i].TexParam;
-                    HostFrameTextures[i * 2 + 1] = CurPolygonRAM[i].TexPalette;
+                    const Polygon& poly = CurPolygonRAM[i];
+                    HostFrameTextures[i * 2] = poly.TexParam;
+                    HostFrameTextures[i * 2 + 1] = poly.TexPalette;
+                    HostFramePolygon& out = HostFramePolygons[i];
+                    out.TexParam = poly.TexParam;
+                    out.TexPalette = poly.TexPalette;
+                    out.Attr = poly.Attr;
+                    out.NumVertices = std::min<u32>(poly.NumVertices, 10);
+                    out.Translucent = poly.Translucent;
+                    out.Hidden = hidden(&poly);
+                    for (u32 v = 0; v < out.NumVertices; v++)
+                    {
+                        const Vertex* vtx = poly.Vertices[v];
+                        out.X[v] = vtx->HiresPosition[0];
+                        out.Y[v] = vtx->HiresPosition[1];
+                        out.U[v] = vtx->TexCoords[0];
+                        out.V[v] = vtx->TexCoords[1];
+                    }
                 }
                 u32 opaque = NumOpaquePolygons, kept = NumPolygons;
                 bool depthOnly = false;

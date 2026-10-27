@@ -51,6 +51,18 @@ struct Vertex
     void DoSavestate(Savestate* file) noexcept;
 };
 
+// Host only: a polygon of the frame flushed last as a title plugin sees it
+// (what a frame is made of and where; see GetHostFramePolygons).
+struct HostFramePolygon
+{
+    u32 TexParam, TexPalette, Attr;
+    u32 NumVertices;      // after clipping, up to 10
+    bool Translucent;
+    bool Hidden;          // left out by SetHostHiddenPolygons
+    s32 X[10], Y[10];     // screen position, 16.4 fixed, in the frame's raster
+    s32 U[10], V[10];     // texture coordinates, 1/16 texel
+};
+
 struct Polygon
 {
     Vertex* Vertices[10];
@@ -145,6 +157,14 @@ public:
     [[nodiscard]] const std::vector<u32>& GetHostFrameTextures() const noexcept
     {
         return HostFrameTextures;
+    }
+    // Host only: every polygon the guest submitted for the frame flushed
+    // last (hidden ones included), with its clipped vertices' positions and
+    // texture coordinates: a title plugin that draws a frame's parts itself
+    // places them where the frame has them.
+    [[nodiscard]] const std::vector<HostFramePolygon>& GetHostFramePolygons() const noexcept
+    {
+        return HostFramePolygons;
     }
     void SetHostHiddenPolygons(const u32* mask_value, u32 count, bool clear_transparent,
                                bool keep_depth = false)
@@ -257,6 +277,7 @@ private:
     // for the frame flushed last, hidden ones included (title plugins
     // identify what a frame shows).
     std::vector<u32> HostFrameTextures;
+    std::vector<HostFramePolygon> HostFramePolygons;
     bool HostClearTransparent = false;
     bool HostHiddenKeepDepth = false;
     bool RenderEmptyHostRolled = false;  // swapped in empty under the roll

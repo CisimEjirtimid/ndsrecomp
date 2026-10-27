@@ -6,6 +6,7 @@
 
 #include "gpu3d.h"
 #include "host_profile.h"
+#include "nds_title_plugin.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1457,6 +1458,29 @@ void nds_gpu3d_set_view_roll_skip(bool skip) {
 }
 
 bool nds_gpu3d_view_roll_skip() { return g_nds.GPU.GPU3D.GetHostViewRollSkip(); }
+
+uint32_t nds_gpu3d_frame_polygons(NdsTitlePolygon* out, uint32_t max) {
+    const std::vector<melonDS::HostFramePolygon>& polys =
+        g_nds.GPU.GPU3D.GetHostFramePolygons();
+    const uint32_t n = static_cast<uint32_t>(polys.size());
+    for (uint32_t i = 0; out && i < n && i < max; ++i) {
+        const melonDS::HostFramePolygon& p = polys[i];
+        NdsTitlePolygon& o = out[i];
+        o.tex_param = p.TexParam;
+        o.tex_palette = p.TexPalette;
+        o.attr = p.Attr;
+        o.vertex_count = p.NumVertices;
+        o.flags = (p.Translucent ? NDS_POLYGON_TRANSLUCENT : 0u) |
+                  (p.Hidden ? NDS_POLYGON_HIDDEN : 0u);
+        for (uint32_t v = 0; v < 10; ++v) {
+            o.x[v] = v < p.NumVertices ? p.X[v] : 0;
+            o.y[v] = v < p.NumVertices ? p.Y[v] : 0;
+            o.u[v] = v < p.NumVertices ? p.U[v] : 0;
+            o.v[v] = v < p.NumVertices ? p.V[v] : 0;
+        }
+    }
+    return n;
+}
 
 uint32_t nds_gpu3d_frame_textures(uint32_t* pairs, uint32_t max) {
     // Each polygon's pair, recorded at the flush; distinct ones on request.

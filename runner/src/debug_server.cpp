@@ -23,6 +23,7 @@
 #include "frontend.h"
 #include "gpu2d.h"
 #include "gpu3d.h"
+#include "nds_title_plugin.h"
 #include "vram.h"
 #include "hle_profile.h"
 #if defined(NDS_MPH_MATH_HLE)
@@ -777,6 +778,27 @@ std::string handle(const std::string& line) {
         for (uint32_t i = 0; i < n; ++i)
             out += (i ? "," : "") + std::string("[") + std::to_string(pairs[i * 2]) + "," +
                    std::to_string(pairs[i * 2 + 1]) + "]";
+        return out + "]}";
+    }
+    if (cmd == "gx_frame_polygons") {
+        // Every polygon of the frame flushed last: texture pair, attr,
+        // flags and its clipped vertices [x, y, u, v] (x, y 16.4; u, v 1/16).
+        std::vector<NdsTitlePolygon> polys(2048);
+        const uint32_t n =
+            std::min<uint32_t>(nds_gpu3d_frame_polygons(polys.data(), 2048), 2048);
+        std::string out = "{\"polygons\":[";
+        for (uint32_t i = 0; i < n; ++i) {
+            const NdsTitlePolygon& p = polys[i];
+            out += (i ? ",{" : "{") + std::string("\"tex\":[") + std::to_string(p.tex_param) +
+                   "," + std::to_string(p.tex_palette) + "],\"attr\":" +
+                   std::to_string(p.attr) + ",\"flags\":" + std::to_string(p.flags) +
+                   ",\"v\":[";
+            for (uint32_t v = 0; v < p.vertex_count; ++v)
+                out += (v ? ",[" : "[") + std::to_string(p.x[v]) + "," +
+                       std::to_string(p.y[v]) + "," + std::to_string(p.u[v]) + "," +
+                       std::to_string(p.v[v]) + "]";
+            out += "]}";
+        }
         return out + "]}";
     }
     if (cmd == "read_texture") {

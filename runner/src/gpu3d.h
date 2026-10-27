@@ -195,6 +195,10 @@ void nds_gpu3d_set_view_roll_skip(bool skip);
 // used (hidden polygons included), up to `max` pairs into `pairs`; returns
 // how many there are.
 uint32_t nds_gpu3d_frame_textures(uint32_t* pairs, uint32_t max);
+// Every polygon of the frame flushed last (NdsTitlePolygon as the plugin
+// API lays it out), up to `max` into `out`; returns how many there are.
+struct NdsTitlePolygon;
+uint32_t nds_gpu3d_frame_polygons(NdsTitlePolygon* out, uint32_t max);
 // With `keep_depth` they stay as depth alone (see GPU3D::SetHostHiddenPolygons).
 void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
                                    bool clear_transparent, bool keep_depth = false);
