@@ -10,6 +10,7 @@
 #include "gpu3d.h"
 #include "io.h"
 #include "runtime_arm.h"
+#include "vram.h"
 #include "nds_title_plugin.h"
 
 #ifndef NDS_HAVE_TITLE_PLUGIN
@@ -69,6 +70,22 @@ void host_hide_3d_polygons(const uint32_t* mask_value, int count,
                                   clear_transparent != 0);
 }
 
+uint32_t host_frame_textures(uint32_t* pairs, uint32_t max) {
+    return nds_gpu3d_frame_textures(pairs, max);
+}
+
+uint32_t host_read_texture(uint32_t addr, void* dst, uint32_t len) {
+    if (!dst) return 0;
+    nds_vram_read_texture(addr, static_cast<uint8_t*>(dst), len);
+    return len;
+}
+
+uint32_t host_read_texture_palette(uint32_t addr, void* dst, uint32_t len) {
+    if (!dst) return 0;
+    nds_vram_read_texpal(addr, static_cast<uint8_t*>(dst), len);
+    return len;
+}
+
 int host_layers(NdsTitleLayers* out) {
     static_assert(NDS_LAYER_COUNT == NDS_GPU2D_LAYER_COUNT, "layer enums");
     NdsGpu2dLayers l{};
@@ -97,7 +114,8 @@ const NdsTitleHost kHost = {NDS_TITLE_PLUGIN_ABI, host_read, host_frame,
                             host_log, host_write, host_capture_layers,
                             host_layers, host_set_view_roll,
                             host_skip_view_roll, host_fast_forward,
-                            host_hide_3d_polygons};
+                            host_hide_3d_polygons, host_frame_textures,
+                            host_read_texture, host_read_texture_palette};
 
 }  // namespace
 

@@ -7,6 +7,7 @@
 #include "gpu3d.h"
 #include "host_profile.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
@@ -1456,6 +1457,24 @@ void nds_gpu3d_set_view_roll_skip(bool skip) {
 }
 
 bool nds_gpu3d_view_roll_skip() { return g_nds.GPU.GPU3D.GetHostViewRollSkip(); }
+
+uint32_t nds_gpu3d_frame_textures(uint32_t* pairs, uint32_t max) {
+    // Each polygon's pair, recorded at the flush; distinct ones on request.
+    const std::vector<uint32_t>& t = g_nds.GPU.GPU3D.GetHostFrameTextures();
+    std::vector<uint64_t> seen;
+    uint32_t count = 0;
+    for (size_t i = 0; i + 1 < t.size(); i += 2) {
+        const uint64_t key = static_cast<uint64_t>(t[i]) << 32 | t[i + 1];
+        if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+        seen.push_back(key);
+        if (pairs && count < max) {
+            pairs[count * 2] = t[i];
+            pairs[count * 2 + 1] = t[i + 1];
+        }
+        ++count;
+    }
+    return count;
+}
 
 void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
                                    bool clear_transparent) {

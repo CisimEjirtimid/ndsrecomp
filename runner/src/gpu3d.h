@@ -191,6 +191,10 @@ void nds_gpu3d_set_view_roll_skip(bool skip);
 // {mask, value} pairs out of the frames rendered from now on, and render
 // the clear colour transparent (alpha 0) with `clear_transparent`; count 0
 // and false restore the game's frames.
+// The distinct {TEXIMAGE_PARAM, PLTT_BASE} pairs the frame flushed last
+// used (hidden polygons included), up to `max` pairs into `pairs`; returns
+// how many there are.
+uint32_t nds_gpu3d_frame_textures(uint32_t* pairs, uint32_t max);
 void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
                                    bool clear_transparent);
 bool nds_gpu3d_view_roll_skip();

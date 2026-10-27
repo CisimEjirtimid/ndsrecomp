@@ -50,6 +50,11 @@ const NdsVramRendererView* nds_vram_renderer_view(int engine);
 // caller's buffer. Unmapped slots read as zero.
 void nds_vram_copy_texture(uint8_t* dst);   // 512 KiB
 void nds_vram_copy_texpal(uint8_t* dst);    // 128 KiB
+// `len` bytes of those spaces from `addr` (the 3D engine's addresses:
+// TEXIMAGE_PARAM's offset * 8, PLTT_BASE * 16 or * 8), for host tools and
+// title plugins. Unmapped slots and bytes past the space read as zero.
+void nds_vram_read_texture(uint32_t addr, uint8_t* dst, uint32_t len);
+void nds_vram_read_texpal(uint32_t addr, uint8_t* dst, uint32_t len);
 
 // Display-capture unit access (engine A DISPCAPCNT). Capture reads/writes
 // the physical bank storage directly, gated only on the bank being mapped

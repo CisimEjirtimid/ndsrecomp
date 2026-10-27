@@ -1164,6 +1164,15 @@ ndsrecomp_link_tomlpp(frontend_config_test)
       ${NDS_ARM_RECOMP_INCLUDE_DIRS})
   add_test(NAME gpu2d_window_test COMMAND gpu2d_window_test)
 
+  add_executable(vram_texture_read_test
+      tests/vram_texture_read_test.cpp
+      src/vram.cpp)
+  target_include_directories(vram_texture_read_test PRIVATE
+      src
+      ${CMAKE_CURRENT_SOURCE_DIR}/../recompiler/armv4t
+      ${NDS_ARM_RECOMP_INCLUDE_DIRS})
+  add_test(NAME vram_texture_read_test COMMAND vram_texture_read_test)
+
   if(Python3_Interpreter_FOUND)
     # The deadline-bounded per-instruction machinery has no value anyone can
     # assert; its correctness is a set of structural properties (fast path
