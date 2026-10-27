@@ -2103,6 +2103,8 @@ void render_engine_line(LineJob& job, int engine, LineScratch& sc) {
 bool enabled(int engine){return (nds_powercontrol9()&(engine?0x0200u:0x0002u))!=0;}
 
 uint32_t reg_read(const Unit& u,uint32_t off,uint32_t width){
+    // Byte reads (the debug server's and a title plugin's) see the halfword.
+    if(width==1)return(reg_read(u,off&~1u,2)>>((off&1u)*8u))&0xFFu;
     if(width==4){if(off==0)return u.dispcnt;if(off==0x64)return u.capture;return reg_read(u,off,2)|(reg_read(u,off+2,2)<<16);}
     if(width==2){
         if(off==0)return u.dispcnt&0xFFFFu;

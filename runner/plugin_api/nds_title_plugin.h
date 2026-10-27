@@ -72,6 +72,23 @@ typedef struct NdsTitleLayers {
 /* NdsTitleLayers has the per-line brightness. */
 #define NDS_LAYERS_HAS_BRIGHTNESS 1
 
+/* A polygon of the 3D frame flushed last (NdsTitleHost.frame_polygons). */
+#define NDS_POLYGON_TRANSLUCENT 1
+#define NDS_POLYGON_HIDDEN 2 /* left out by hide_3d_polygons */
+typedef struct NdsTitlePolygon {
+    uint32_t tex_param;    /* TEXIMAGE_PARAM */
+    uint32_t tex_palette;  /* PLTT_BASE */
+    uint32_t attr;         /* POLYGON_ATTR */
+    uint32_t vertex_count; /* after clipping to the viewport, up to 10 */
+    uint32_t flags;        /* NDS_POLYGON_* */
+    /* Per vertex: the screen position in the frame's raster (widened and
+     * turned as rendered), 16.4 fixed point; the texture coordinates in
+     * 1/16 texel. A clipped vertex has the coordinates of its place on the
+     * edge, so a quad's full placement follows from any three. */
+    int32_t x[10], y[10];
+    int32_t u[10], v[10];
+} NdsTitlePolygon;
+
 typedef struct NdsTitleHost {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
     /* Side-effect-free read of the ARM9 view of the guest bus (main RAM,
@@ -139,7 +156,13 @@ typedef struct NdsTitleHost {
      * bytes read as zero. Returns `len`. Call from `frame`. May be NULL. */
     uint32_t (*read_texture)(uint32_t addr, void* dst, uint32_t len);
     uint32_t (*read_texture_palette)(uint32_t addr, void* dst, uint32_t len);
+    /* Every polygon of the 3D frame flushed last, in submission order,
+     * hidden ones included: up to `max` into `out`; returns how many there
+     * are (may exceed max). Call from `frame`. May be NULL (older runners). */
+    uint32_t (*frame_polygons)(NdsTitlePolygon* out, uint32_t max);
 } NdsTitleHost;
+/* NdsTitleHost has frame_polygons. */
+#define NDS_HOST_HAS_POLYGONS 1
 /* NdsTitleHost has frame_textures, read_texture and read_texture_palette. */
 #define NDS_HOST_HAS_TEXTURES 1
 /* hide_3d_polygons flags. */
