@@ -1272,8 +1272,8 @@ std::string handle(const std::string& line) {
     }
     if (cmd == "hide_3d_polygons") {
         // {"cmd":"hide_3d_polygons","params":"1FF00000,12400000",
-        // "clear_transparent":true}: hex {mask, value} pairs of
-        // TEXIMAGE_PARAM; empty restores the game's frames.
+        // "clear_transparent":true,"keep_depth":false}: hex {mask, value}
+        // pairs of TEXIMAGE_PARAM; empty restores the game's frames.
         std::vector<uint32_t> params;
         const std::string list = json_str(line, "params");
         for (size_t p = 0; p < list.size();) {
@@ -1286,7 +1286,8 @@ std::string handle(const std::string& line) {
         }
         nds_gpu3d_set_hidden_polygons(params.data(),
                                       static_cast<uint32_t>(params.size() / 2),
-                                      json_bool(line, "clear_transparent", false));
+                                      json_bool(line, "clear_transparent", false),
+                                      json_bool(line, "keep_depth", false));
         return "{\"pairs\":" + std::to_string(params.size() / 2) + "}";
     }
     if (cmd == "plugin_input") {

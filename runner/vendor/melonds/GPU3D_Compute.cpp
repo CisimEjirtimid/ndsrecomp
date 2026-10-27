@@ -650,7 +650,8 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
         u32 nextVL, nextVR;
 
         RenderPolygons[i].FirstXSpan = numSetupIndices;
-        RenderPolygons[i].Attr = polygon->Attr;
+        // Host only: bit 31 (unused by the DS) marks a depth-only polygon.
+        RenderPolygons[i].Attr = polygon->Attr | (polygon->HostDepthOnly ? 0x80000000u : 0u);
 
         bool foundVariant = false;
         if (i > 0)

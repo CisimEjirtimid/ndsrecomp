@@ -116,15 +116,17 @@ typedef struct NdsTitleHost {
     /* Leave out of the 3D frames rendered from now on the polygons whose
      * TEXIMAGE_PARAM matches one of `count` {mask, value} pairs ((param &
      * mask) == value; e.g. mask 0x1FF00000 picks a texture format and size
-     * wherever it sits in VRAM), and with `clear_transparent` render the
-     * clear colour with alpha 0. count 0 and 0 restore the game's frames.
-     * For a title that draws a scene's parts itself, e.g. a character
-     * without the backdrop the game renders behind it (see
-     * NdsTitleDraw.keep_3d). Host only, but what the guest then displays and
-     * captures changes too: only in scenes that never read it back. May be
-     * NULL (older runners). */
-    void (*hide_3d_polygons)(const uint32_t* mask_value, int count,
-                             int clear_transparent);
+     * wherever it sits in VRAM). `flags`: NDS_HIDE_CLEAR_TRANSPARENT renders
+     * the clear colour with alpha 0; NDS_HIDE_KEEP_DEPTH keeps the opaque ones
+     * as depth alone, drawn before the frame's other opaque polygons, so
+     * what they covered stays hidden (the 3D in front of a picture without
+     * the picture). count 0 and flags 0 restore the game's frames. For a
+     * title that draws a scene's parts itself, e.g. a character without the
+     * backdrop the game renders behind it (see NdsTitleDraw.keep_3d). Host
+     * only, but what the guest then displays and captures changes too: only
+     * in scenes that never read it back. May be NULL (older runners; before
+     * NDS_HIDE_KEEP_DEPTH any nonzero flags clear transparent). */
+    void (*hide_3d_polygons)(const uint32_t* mask_value, int count, int flags);
     /* What the 3D frame flushed last (rendered and shown next) is made of:
      * up to `max` distinct {TEXIMAGE_PARAM, PLTT_BASE} pairs of its
      * polygons into `pairs` (2 * max words), in submission order, polygons
@@ -140,6 +142,9 @@ typedef struct NdsTitleHost {
 } NdsTitleHost;
 /* NdsTitleHost has frame_textures, read_texture and read_texture_palette. */
 #define NDS_HOST_HAS_TEXTURES 1
+/* hide_3d_polygons flags. */
+#define NDS_HIDE_CLEAR_TRANSPARENT 1
+#define NDS_HIDE_KEEP_DEPTH 2
 
 /* Player input for one frame. The runner fills it from the host devices
  * (keyboard, pad, stick, mouse stylus, debug server) and applies whatever the

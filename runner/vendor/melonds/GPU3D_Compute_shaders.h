@@ -1373,6 +1373,14 @@ void ProcessCoarseMask(int linearTile, uint coarseMask, uint coarseOffset,
                             continue;
                     }
 
+                    if ((polygonAttr & 0x80000000U) != 0U)
+                    {
+                        // host only: depth without colour, opaque texels
+                        if ((tileColor & 0x1F000000U) == 0x1F000000U && !writeSecondLayer)
+                            depth.x = tileDepth;
+                        continue;
+                    }
+
                     uint srcAttr = (polygonAttr & 0x3F008000U);
 
                     uint srcA = tileColor & 0x1F000000U;

@@ -63,11 +63,11 @@ void host_fast_forward(int on) {
     g_fast_forward.store(on != 0, std::memory_order_relaxed);
 }
 
-void host_hide_3d_polygons(const uint32_t* mask_value, int count,
-                           int clear_transparent) {
+void host_hide_3d_polygons(const uint32_t* mask_value, int count, int flags) {
     nds_gpu3d_set_hidden_polygons(mask_value,
                                   count > 0 ? static_cast<uint32_t>(count) : 0u,
-                                  clear_transparent != 0);
+                                  (flags & NDS_HIDE_CLEAR_TRANSPARENT) != 0,
+                                  (flags & NDS_HIDE_KEEP_DEPTH) != 0);
 }
 
 uint32_t host_frame_textures(uint32_t* pairs, uint32_t max) {
