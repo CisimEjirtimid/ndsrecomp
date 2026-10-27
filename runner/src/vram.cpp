@@ -288,7 +288,31 @@ void copy_slot_space(uint8_t* dst, const uint16_t* masks, unsigned slots,
     }
 }
 
+void read_slot_space(uint8_t* dst, const uint16_t* masks, unsigned slots,
+                     uint32_t slot_size, uint32_t addr, uint32_t len) {
+    for (uint32_t i = 0; i < len; ++i) {
+        const uint32_t a = addr + i;
+        const uint32_t s = a / slot_size;
+        if (a < addr || s >= slots || !masks[s]) {
+            dst[i] = 0;
+            continue;
+        }
+        if (const uint8_t* direct = direct_chunk(masks[s], s * slot_size))
+            dst[i] = direct[a - s * slot_size];
+        else
+            dst[i] = static_cast<uint8_t>(mapped_read(masks[s], a, 1));
+    }
+}
+
 } // namespace
+
+void nds_vram_read_texture(uint32_t addr, uint8_t* dst, uint32_t len) {
+    read_slot_space(dst, g_texture.data(), 4, 0x20000u, addr, len);
+}
+
+void nds_vram_read_texpal(uint32_t addr, uint8_t* dst, uint32_t len) {
+    read_slot_space(dst, g_texpal.data(), 8, 0x4000u, addr, len);
+}
 
 void nds_vram_copy_texture(uint8_t* dst) {
     copy_slot_space(dst, g_texture.data(), 4, 0x20000u);

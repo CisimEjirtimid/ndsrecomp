@@ -23,6 +23,7 @@
 #include "frontend.h"
 #include "gpu2d.h"
 #include "gpu3d.h"
+#include "vram.h"
 #include "hle_profile.h"
 #if defined(NDS_MPH_MATH_HLE)
 #include "hle_mph_math.h"
@@ -767,6 +768,30 @@ std::string handle(const std::string& line) {
         }
         result += "]}";
         return result;
+    }
+    if (cmd == "gx_frame_textures") {
+        // {TEXIMAGE_PARAM, PLTT_BASE} pairs of the frame flushed last.
+        std::vector<uint32_t> pairs(2 * 512);
+        const uint32_t n = std::min<uint32_t>(nds_gpu3d_frame_textures(pairs.data(), 512), 512);
+        std::string out = "{\"textures\":[";
+        for (uint32_t i = 0; i < n; ++i)
+            out += (i ? "," : "") + std::string("[") + std::to_string(pairs[i * 2]) + "," +
+                   std::to_string(pairs[i * 2 + 1]) + "]";
+        return out + "]}";
+    }
+    if (cmd == "read_texture") {
+        // {"cmd":"read_texture","addr":N,"len":N,"palette":false}: texture
+        // image (or palette) memory as the 3D engine addresses it.
+        const uint32_t addr = static_cast<uint32_t>(json_u64(line, "addr", 0));
+        const uint32_t len = static_cast<uint32_t>(std::min<uint64_t>(json_u64(line, "len", 0), 0x80000));
+        std::vector<uint8_t> bytes(len);
+        if (json_bool(line, "palette", false))
+            nds_vram_read_texpal(addr, bytes.data(), len);
+        else
+            nds_vram_read_texture(addr, bytes.data(), len);
+        std::string hex;
+        append_hex(hex, bytes.data(), len);
+        return "{\"hex\":\"" + hex + "\"}";
     }
     if (cmd == "gx_write_sample") {
         const uint64_t count = json_u64(line, "count", 0);

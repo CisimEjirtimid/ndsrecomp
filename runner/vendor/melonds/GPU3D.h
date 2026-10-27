@@ -136,6 +136,10 @@ public:
     // colour renders with alpha 0. For a title plugin that draws a frame's
     // parts itself (a character without the backdrop the game draws behind
     // it); what the guest displays and captures changes too.
+    [[nodiscard]] const std::vector<u32>& GetHostFrameTextures() const noexcept
+    {
+        return HostFrameTextures;
+    }
     void SetHostHiddenPolygons(const u32* mask_value, u32 count, bool clear_transparent)
     {
         HostHiddenPolygons.assign(mask_value, mask_value + 2 * count);
@@ -241,6 +245,10 @@ private:
     int HostViewRoll = 0;
     bool HostViewRollSkip = false;
     std::vector<u32> HostHiddenPolygons;  // {mask, value} pairs
+    // Host only: {TexParam, TexPalette} of each polygon the guest submitted
+    // for the frame flushed last, hidden ones included (title plugins
+    // identify what a frame shows).
+    std::vector<u32> HostFrameTextures;
     bool HostClearTransparent = false;
     bool RenderEmptyHostRolled = false;  // swapped in empty under the roll
     bool RenderedHostRolled = false;

@@ -125,7 +125,21 @@ typedef struct NdsTitleHost {
      * NULL (older runners). */
     void (*hide_3d_polygons)(const uint32_t* mask_value, int count,
                              int clear_transparent);
+    /* What the 3D frame flushed last (rendered and shown next) is made of:
+     * up to `max` distinct {TEXIMAGE_PARAM, PLTT_BASE} pairs of its
+     * polygons into `pairs` (2 * max words), in submission order, polygons
+     * hide_3d_polygons leaves out included. Returns how many there are
+     * (may exceed max). Call from `frame`. May be NULL (older runners). */
+    uint32_t (*frame_textures)(uint32_t* pairs, uint32_t max);
+    /* Read texture image / texture palette memory as the 3D engine
+     * addresses it (TEXIMAGE_PARAM's offset * 8; PLTT_BASE * 16, or * 8
+     * for 4-colour textures), from the banks mapped there now; unmapped
+     * bytes read as zero. Returns `len`. Call from `frame`. May be NULL. */
+    uint32_t (*read_texture)(uint32_t addr, void* dst, uint32_t len);
+    uint32_t (*read_texture_palette)(uint32_t addr, void* dst, uint32_t len);
 } NdsTitleHost;
+/* NdsTitleHost has frame_textures, read_texture and read_texture_palette. */
+#define NDS_HOST_HAS_TEXTURES 1
 
 /* Player input for one frame. The runner fills it from the host devices
  * (keyboard, pad, stick, mouse stylus, debug server) and applies whatever the

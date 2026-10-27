@@ -2567,6 +2567,12 @@ void GPU3D::VBlank() noexcept
                             return true;
                     return false;
                 };
+                HostFrameTextures.resize(NumPolygons * 2);
+                for (u32 i = 0; i < NumPolygons; i++)
+                {
+                    HostFrameTextures[i * 2] = CurPolygonRAM[i].TexParam;
+                    HostFrameTextures[i * 2 + 1] = CurPolygonRAM[i].TexPalette;
+                }
                 u32 opaque = NumOpaquePolygons, kept = NumPolygons;
                 if (NumPolygons && !HostHiddenPolygons.empty())
                 {
