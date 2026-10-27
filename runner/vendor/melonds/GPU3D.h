@@ -71,6 +71,9 @@ struct Polygon
     bool PerspectiveProjection = false;
     // Host only (never saved): submitted while the host view roll was on.
     bool HostRolled = false;
+    // Host only (never saved): hidden, but its depth kept (rendered first,
+    // depth without colour), so what it covered stays covered.
+    bool HostDepthOnly = false;
 
     bool IsShadowMask;
     bool IsShadow;
@@ -133,17 +136,22 @@ public:
     // Host only: polygons whose TEXIMAGE_PARAM matches one of `count`
     // {mask, value} pairs ((param & mask) == value) are left out of the
     // frames latched while set, and with `clear_transparent` the clear
-    // colour renders with alpha 0. For a title plugin that draws a frame's
+    // colour renders with alpha 0; with `keep_depth` the opaque ones stay
+    // in the frame as depth alone, drawn before the other opaque polygons,
+    // so whatever they covered stays hidden. For a title plugin that draws a frame's
     // parts itself (a character without the backdrop the game draws behind
-    // it); what the guest displays and captures changes too.
+    // it, a picture with the 3D in front of it); what the guest displays and
+    // captures changes too.
     [[nodiscard]] const std::vector<u32>& GetHostFrameTextures() const noexcept
     {
         return HostFrameTextures;
     }
-    void SetHostHiddenPolygons(const u32* mask_value, u32 count, bool clear_transparent)
+    void SetHostHiddenPolygons(const u32* mask_value, u32 count, bool clear_transparent,
+                               bool keep_depth = false)
     {
         HostHiddenPolygons.assign(mask_value, mask_value + 2 * count);
         HostClearTransparent = clear_transparent;
+        HostHiddenKeepDepth = keep_depth;
     }
     // Whether the last frame rendered (VCount 215) has polygons submitted
     // under the view roll: a title that shares the 3D engine between passes
@@ -250,6 +258,7 @@ private:
     // identify what a frame shows).
     std::vector<u32> HostFrameTextures;
     bool HostClearTransparent = false;
+    bool HostHiddenKeepDepth = false;
     bool RenderEmptyHostRolled = false;  // swapped in empty under the roll
     bool RenderedHostRolled = false;
     u64 RenderSerial = 0;

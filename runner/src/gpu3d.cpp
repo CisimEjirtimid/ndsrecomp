@@ -1477,9 +1477,9 @@ uint32_t nds_gpu3d_frame_textures(uint32_t* pairs, uint32_t max) {
 }
 
 void nds_gpu3d_set_hidden_polygons(const uint32_t* mask_value, uint32_t count,
-                                   bool clear_transparent) {
+                                   bool clear_transparent, bool keep_depth) {
     g_nds.GPU.GPU3D.SetHostHiddenPolygons(mask_value, mask_value ? count : 0,
-                                          clear_transparent);
+                                          clear_transparent, keep_depth);
 }
 
 namespace {

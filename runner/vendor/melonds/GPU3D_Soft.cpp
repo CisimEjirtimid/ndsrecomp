@@ -1194,10 +1194,13 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
             }
 
             DepthBuffer[pixeladdr] = z;
-            ColorBuffer[pixeladdr] = color;
-            AttrBuffer[pixeladdr] = attr;
+            if (!polygon->HostDepthOnly)  // host only: depth without colour
+            {
+                ColorBuffer[pixeladdr] = color;
+                AttrBuffer[pixeladdr] = attr;
+            }
         }
-        else
+        else if (!polygon->HostDepthOnly)
         {
             if (!(polygon->Attr & (1<<11))) z = -1;
             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);
@@ -1283,10 +1286,13 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
             }
 
             DepthBuffer[pixeladdr] = z;
-            ColorBuffer[pixeladdr] = color;
-            AttrBuffer[pixeladdr] = attr;
+            if (!polygon->HostDepthOnly)  // host only: depth without colour
+            {
+                ColorBuffer[pixeladdr] = color;
+                AttrBuffer[pixeladdr] = attr;
+            }
         }
-        else
+        else if (!polygon->HostDepthOnly)
         {
             if (!(polygon->Attr & (1<<11))) z = -1;
             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);
@@ -1382,10 +1388,13 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
             }
 
             DepthBuffer[pixeladdr] = z;
-            ColorBuffer[pixeladdr] = color;
-            AttrBuffer[pixeladdr] = attr;
+            if (!polygon->HostDepthOnly)  // host only: depth without colour
+            {
+                ColorBuffer[pixeladdr] = color;
+                AttrBuffer[pixeladdr] = attr;
+            }
         }
-        else
+        else if (!polygon->HostDepthOnly)
         {
             if (!(polygon->Attr & (1<<11))) z = -1;
             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);

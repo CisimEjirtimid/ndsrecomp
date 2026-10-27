@@ -2574,14 +2574,24 @@ void GPU3D::VBlank() noexcept
                     HostFrameTextures[i * 2 + 1] = CurPolygonRAM[i].TexPalette;
                 }
                 u32 opaque = NumOpaquePolygons, kept = NumPolygons;
+                bool depthOnly = false;
+                for (u32 i = 0; i < NumPolygons; i++)
+                    CurPolygonRAM[i].HostDepthOnly = false;
                 if (NumPolygons && !HostHiddenPolygons.empty())
                 {
                     opaque = kept = 0;
                     for (u32 i = 0; i < NumPolygons; i++)
                     {
-                        if (hidden(&CurPolygonRAM[i])) continue;
+                        Polygon* poly = &CurPolygonRAM[i];
+                        if (hidden(poly))
+                        {
+                            // Depth is kept for opaque ones; translucent
+                            // ones (film grain over a picture) are dropped.
+                            if (!HostHiddenKeepDepth || poly->Translucent) continue;
+                            poly->HostDepthOnly = depthOnly = true;
+                        }
                         kept++;
-                        if (!CurPolygonRAM[i].Translucent) opaque++;
+                        if (!poly->Translucent || poly->HostDepthOnly) opaque++;
                     }
                 }
                 if (kept)
@@ -2592,8 +2602,8 @@ void GPU3D::VBlank() noexcept
                     for (u32 i = 0; i < NumPolygons; i++)
                     {
                         Polygon* poly = &CurPolygonRAM[i];
-                        if (hidden(poly)) continue;
-                        if (poly->Translucent)
+                        if (hidden(poly) && !poly->HostDepthOnly) continue;
+                        if (poly->Translucent && !poly->HostDepthOnly)
                             RenderPolygonRAM[it++] = poly;
                         else
                             RenderPolygonRAM[io++] = poly;
@@ -2604,6 +2614,13 @@ void GPU3D::VBlank() noexcept
                     std::stable_sort(RenderPolygonRAM.begin(),
                         RenderPolygonRAM.begin() + ((FlushAttributes & 0x1) ? opaque : kept),
                         YSort);
+
+                    // Host only: depth-only polygons first, so the depth
+                    // they leave hides what they covered.
+                    if (depthOnly)
+                        std::stable_partition(RenderPolygonRAM.begin(),
+                            RenderPolygonRAM.begin() + opaque,
+                            [](const Polygon* poly) { return poly->HostDepthOnly; });
                 }
 
                 RenderNumPolygons = kept;
