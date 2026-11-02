@@ -2465,6 +2465,9 @@ int plugin_source_size(int source, int* w, int* h) {
 void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
                    const float* dst, float degrees, float alpha, int flags) {
     const bool smooth = (flags & NDS_DRAW_SMOOTH) != 0;
+    // Mirrored in the source's own axes, before the turn.
+    const int flip = ((flags & NDS_DRAW_FLIP_X) ? SDL_FLIP_HORIZONTAL : 0) |
+                     ((flags & NDS_DRAW_FLIP_Y) ? SDL_FLIP_VERTICAL : 0);
     if (!texture || !dst) return;
     float tw = 0.0f, th = 0.0f;
     if (!texture_size(texture, &tw, &th)) return;
@@ -2487,7 +2490,7 @@ void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
     if (src) s = SDL_FRect{src[0] * sx, src[1] * sy, src[2] * sx, src[3] * sy};
     const SDL_FRect d{dst[0], dst[1], dst[2], dst[3]};
     SDL_RenderTextureRotated(g_canvas.renderer, texture, &s, &d, degrees,
-                             nullptr, SDL_FLIP_NONE);
+                             nullptr, static_cast<SDL_FlipMode>(flip));
 #else
     SDL_Rect s{0, 0, static_cast<int>(tw), static_cast<int>(th)};
     if (src)
@@ -2495,7 +2498,7 @@ void plugin_render(SDL_Texture* texture, int sw, int sh, const float* src,
                      static_cast<int>(src[2] * sx), static_cast<int>(src[3] * sy)};
     const SDL_FRect d{dst[0], dst[1], dst[2], dst[3]};
     SDL_RenderCopyExF(g_canvas.renderer, texture, &s, &d, degrees, nullptr,
-                      SDL_FLIP_NONE);
+                      static_cast<SDL_RendererFlip>(flip));
 #endif
     SDL_SetTextureAlphaMod(texture, 255);
     SDL_SetTextureColorMod(texture, 255, 255, 255);

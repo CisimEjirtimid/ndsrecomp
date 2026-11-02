@@ -239,6 +239,10 @@ enum {
 /* NdsTitleDraw.draw flags. */
 #define NDS_DRAW_SMOOTH 1
 #define NDS_DRAW_KEEP 2
+/* Mirror the source in its own x / y, before the turn (a character drawn
+ * facing the other way). Older runners ignore them. */
+#define NDS_DRAW_FLIP_X 4
+#define NDS_DRAW_FLIP_Y 8
 typedef struct NdsTitleDraw {
     int width, height; /* canvas size: the window's render output, pixels */
     /* How the frontend's layout turns the DS screens (the book layouts turn
