@@ -16,6 +16,9 @@
 // decoded texels (palette applied) and size, `<w>x<h>_<hash16>.png`. A PNG
 // of that name in the pack directory replaces it; it may be any whole
 // multiple of the native size and is resampled to the storage factor.
+// Region entries (`<w>x<h>_<x>.<y>.<rw>x<rh>_<hash16>.png`) replace one
+// rectangle of a texture, named by a hash of that rectangle alone with its
+// transparent texels as zeros (docs/texture_packs.md).
 // Dumping writes each decoded texture under that name, for pack authors.
 #pragma once
 
