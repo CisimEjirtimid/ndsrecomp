@@ -291,7 +291,12 @@ typedef struct NdsTitleDraw {
 /* NdsTitleDraw has `keep_3d` and `tint`; NdsTitleHost has
  * `hide_3d_polygons`. */
 #define NDS_DRAW_HAS_KEEP_3D 1
-#define NDS_DRAW_IMAGE_SLOTS 16
+/* Host image slots for `image` and `keep_3d`. 32 since plugins compose more
+ * pictures of their own at once (each screen's art and what is in front of
+ * it); a plugin built with more than an older runner has should keep its
+ * use of the higher slots optional (the runner ignores slots past its own
+ * count). */
+#define NDS_DRAW_IMAGE_SLOTS 32
 
 typedef struct NdsTitlePlugin {
     uint32_t abi; /* NDS_TITLE_PLUGIN_ABI */
