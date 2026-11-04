@@ -45,6 +45,25 @@ channel, 5 for alpha), so very smooth gradients can band.
 
 Textures without a replacement follow the filter.
 
+### Region entries
+
+Some textures are atlases whose parts change independently: a game may
+decode a character's animation frame into the top of a texture whose other
+rows hold whatever else sits in that VRAM, so the whole texture never
+repeats exactly. A region entry names one rectangle alone:
+
+```
+<width>x<height>_<x>.<y>.<rw>x<rh>_<hash>.png   e.g. 256x256_0.0.256x192_9b1c...png
+```
+
+`<hash>` is FNV-1a 64 over the rectangle's decoded texels, row by row, with
+every fully transparent texel (alpha 0) hashed as four zero bytes (the
+colour left under a transparent texel is usually stale). The image is a
+whole multiple of the rectangle (`rw`x`rh`); the rest of the texture keeps
+the filter, and the region's image is placed over it. A whole-texture
+entry, when there is one, wins. Pack tools can build region entries
+offline from the game's own data: nothing is dumped for them.
+
 ## Dumping
 
 `--texture-dump DIR` writes every texture the cache decodes, once, as

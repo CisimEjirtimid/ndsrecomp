@@ -50,6 +50,19 @@ bool g_applied_smooth = false;
 bool g_applied_pack = false;
 // Pack file stems (lowercase) -> paths, scanned at apply.
 std::unordered_map<std::string, std::filesystem::path> g_pack;
+// Region entries (`<w>x<h>_<x>.<y>.<rw>x<rh>_<hash16>`): the rectangles
+// named for each texture size, so a decode hashes only those.
+struct PackRegion { uint32_t x, y, w, h; };
+std::unordered_map<uint64_t, std::vector<PackRegion>> g_regions;  // key: w << 32 | h
+// Replacements already read and resampled, by name: an animation decodes
+// the same frames into its texture again and again, and reading a large PNG
+// each time would stall the frame. Oldest out first past the budget.
+struct Loaded { std::vector<uint8_t> texels; uint32_t factor; };
+std::unordered_map<std::string, Loaded> g_loaded;
+std::vector<std::string> g_loaded_order;
+size_t g_loaded_bytes = 0;
+constexpr size_t kLoadedBudget = 256u << 20;
+
 std::unordered_set<std::string> g_dumped;
 
 bool g_ready = false;
@@ -297,6 +310,42 @@ std::string texture_name(uint32_t width, uint32_t height, const void* decoded) {
     return name;
 }
 
+// `<w>x<h>_<x>.<y>.<rw>x<rh>_<hash16>`: FNV-1a 64 over the rectangle's
+// decoded texels, row by row, a transparent texel (alpha 0) hashed as four
+// zero bytes (the colour under it is whatever the texture held before).
+std::string region_name(uint32_t width, uint32_t height, const PackRegion& r,
+                        const uint8_t* texels) {
+    uint64_t hash = 14695981039346656037ull;
+    for (uint32_t y = r.y; y < r.y + r.h; ++y)
+        for (uint32_t x = r.x; x < r.x + r.w; ++x) {
+            const uint8_t* t = texels + (static_cast<size_t>(y) * width + x) * 4u;
+            const bool clear = t[3] == 0;
+            for (int c = 0; c < 4; ++c) {
+                hash ^= clear ? 0u : t[c];
+                hash *= 1099511628211ull;
+            }
+        }
+    char name[96];
+    std::snprintf(name, sizeof(name), "%ux%u_%u.%u.%ux%u_%016llx", width, height, r.x, r.y,
+                  r.w, r.h, static_cast<unsigned long long>(hash));
+    return name;
+}
+
+// The rectangle a region entry's stem names; false for a whole-texture one.
+bool parse_region(const std::string& stem, uint32_t* width, uint32_t* height,
+                  PackRegion* r) {
+    unsigned w = 0, h = 0, x = 0, y = 0, rw = 0, rh = 0;
+    int used = 0;
+    if (std::sscanf(stem.c_str(), "%ux%u_%u.%u.%ux%u_%n", &w, &h, &x, &y, &rw, &rh, &used) != 6 ||
+        used <= 0 || stem.size() - static_cast<size_t>(used) != 16)
+        return false;
+    if (!rw || !rh || x + rw > w || y + rh > h) return false;
+    *width = w;
+    *height = h;
+    *r = {x, y, rw, rh};
+    return true;
+}
+
 std::string lower(std::string s) {
     for (char& c : s)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -305,6 +354,10 @@ std::string lower(std::string s) {
 
 void scan_pack() {
     g_pack.clear();
+    g_regions.clear();
+    g_loaded.clear();
+    g_loaded_order.clear();
+    g_loaded_bytes = 0;
     if (g_pack_dir.empty()) return;
     std::error_code error;
     const std::filesystem::path root = std::filesystem::u8path(g_pack_dir);
@@ -315,7 +368,16 @@ void scan_pack() {
         if (!it->is_regular_file(error)) continue;
         const std::filesystem::path& path = it->path();
         if (lower(path.extension().string()) != ".png") continue;
-        g_pack.emplace(lower(path.stem().string()), path);
+        const std::string stem = lower(path.stem().string());
+        g_pack.emplace(stem, path);
+        uint32_t w = 0, h = 0;
+        PackRegion r{};
+        if (!parse_region(stem, &w, &h, &r)) continue;
+        std::vector<PackRegion>& list = g_regions[static_cast<uint64_t>(w) << 32 | h];
+        if (std::none_of(list.begin(), list.end(), [&](const PackRegion& o) {
+                return o.x == r.x && o.y == r.y && o.w == r.w && o.h == r.h;
+            }))
+            list.push_back(r);
     }
 }
 
@@ -356,16 +418,44 @@ void dump_texture(const std::string& name, uint32_t width, uint32_t height,
 }
 
 void upload_layer(GLuint array, uint32_t width, uint32_t height, uint32_t layer,
-                  const void* texels) {
+                  const void* texels, uint32_t x = 0, uint32_t y = 0) {
     glBindTexture(GL_TEXTURE_2D_ARRAY, array);
-    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(layer),
-                    static_cast<GLsizei>(width), static_cast<GLsizei>(height),
-                    1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, texels);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, static_cast<GLint>(x), static_cast<GLint>(y),
+                    static_cast<GLint>(layer), static_cast<GLsizei>(width),
+                    static_cast<GLsizei>(height), 1, GL_RGBA_INTEGER, GL_UNSIGNED_BYTE, texels);
 }
+
+bool read_replacement(const std::string& name, uint32_t width, uint32_t height,
+                      std::vector<uint8_t>* out);
 
 // The pack's image for this texture, resampled to the storage factor and
 // converted to RGB6A5. False when there is none or it does not fit.
 bool load_replacement(const std::string& name, uint32_t width, uint32_t height,
+                      std::vector<uint8_t>* out) {
+    const auto cached = g_loaded.find(name);
+    if (cached != g_loaded.end() && cached->second.factor == static_cast<uint32_t>(g_applied)) {
+        *out = cached->second.texels;
+        return true;
+    }
+    if (!read_replacement(name, width, height, out)) return false;
+    if (cached != g_loaded.end()) {  // another factor: replaced
+        g_loaded_bytes -= cached->second.texels.size();
+        g_loaded.erase(cached);
+        g_loaded_order.erase(std::find(g_loaded_order.begin(), g_loaded_order.end(), name));
+    }
+    while (!g_loaded_order.empty() && g_loaded_bytes + out->size() > kLoadedBudget) {
+        const auto old = g_loaded.find(g_loaded_order.front());
+        g_loaded_bytes -= old->second.texels.size();
+        g_loaded.erase(old);
+        g_loaded_order.erase(g_loaded_order.begin());
+    }
+    g_loaded.emplace(name, Loaded{*out, static_cast<uint32_t>(g_applied)});
+    g_loaded_order.push_back(name);
+    g_loaded_bytes += out->size();
+    return true;
+}
+
+bool read_replacement(const std::string& name, uint32_t width, uint32_t height,
                       std::vector<uint8_t>* out) {
     const auto found = g_pack.find(name);
     if (found == g_pack.end()) return false;
@@ -592,10 +682,31 @@ bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
     }
     if (g_applied == 1) return false;
     if (g_applied_smooth && g_program)
-        return run_xbr(dst_array, width, height, layer, decoded);
-    static std::vector<uint8_t> repeated;
-    replicate(width, height, texels, &repeated);
-    upload_layer(dst_array, width * g_applied, height * g_applied, layer,
-                 repeated.data());
+        run_xbr(dst_array, width, height, layer, decoded);
+    else {
+        static std::vector<uint8_t> repeated;
+        replicate(width, height, texels, &repeated);
+        upload_layer(dst_array, width * g_applied, height * g_applied, layer,
+                     repeated.data());
+    }
+    // Region entries over the rest: a part of the texture named alone (a
+    // character's frame in an atlas whose other rows change).
+    if (g_applied_pack) {
+        const auto regions = g_regions.find(static_cast<uint64_t>(width) << 32 | height);
+        if (regions != g_regions.end()) {
+            static std::vector<uint8_t> part;
+            bool barrier = false;
+            for (const PackRegion& r : regions->second) {
+                const std::string region = region_name(width, height, r, texels);
+                if (!load_replacement(region, r.w, r.h, &part)) continue;
+                if (!barrier) {  // after the filter's image stores
+                    glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+                    barrier = true;
+                }
+                upload_layer(dst_array, r.w * g_applied, r.h * g_applied, layer, part.data(),
+                             r.x * g_applied, r.y * g_applied);
+            }
+        }
+    }
     return true;
 }
