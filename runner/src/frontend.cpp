@@ -3100,7 +3100,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     std::fprintf(stderr,
         "[sdl] controls: gamepad=Player 1 | bottom mouse=touch | "
         "arrows=D-pad | Z=A X=B | A=Y S=X | Q=L W=R | "
-        "Enter=Start Backspace=Select | Esc=settings%s\n",
+        "Enter=Start Backspace=Select | hold End=close the lid | "
+        "Esc=settings%s\n",
         options.tab_turbo ? " | hold Tab=turbo" : "");
     if (options.relative_mouse_touch) {
         std::fprintf(stderr,
@@ -4129,6 +4130,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 } else if (process_mph_prime_key(
                                scancode, true, false)) {
                     // Consumed by the MPH-specific keyboard/mouse layer.
+                } else if (scancode == SDL_SCANCODE_END) {
+                    nds_set_lid_closed(true);
                 } else if (options.tab_turbo &&
                            scancode == SDL_SCANCODE_TAB) {
                     turbo_pressed = true;
@@ -4148,6 +4151,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 } else if (process_mph_prime_key(
                         scancode, false, false)) {
                     // Consumed by the MPH-specific keyboard/mouse layer.
+                } else if (scancode == SDL_SCANCODE_END) {
+                    nds_set_lid_closed(false);
                 } else if (options.tab_turbo &&
                            scancode == SDL_SCANCODE_TAB) {
                     turbo_pressed = false;
