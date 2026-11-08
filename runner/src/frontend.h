@@ -337,6 +337,9 @@ struct NdsFrontendOptions {
     // A savestate file to load before the first frame (--load-state), for
     // starting a window at a captured scene. Empty: boot normally.
     std::string startup_state_path;
+    // A savestate file to write when the window closes (--save-state-on-exit).
+    // Empty: none.
+    std::string exit_state_path;
     // Optional launcher-owned settings file. Runtime-only menu changes update
     // the existing key/value file when the launcher passes this path.
     std::string runtime_settings_path;
