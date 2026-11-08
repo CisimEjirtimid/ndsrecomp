@@ -2124,6 +2124,10 @@ std::string handle(const std::string& line) {
         nds_set_key_mask(static_cast<uint32_t>(json_u64(line, "mask", 0x3FFu)));
         return "{\"ok\":true}";
     }
+    if (cmd == "lid") {
+        nds_set_lid_closed(json_bool(line, "closed", true));
+        return "{\"ok\":true}";
+    }
     if (cmd == "turbo") {
         nds_set_debug_turbo(json_bool(line, "on", true));
         return "{\"ok\":true}";

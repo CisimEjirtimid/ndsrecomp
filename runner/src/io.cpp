@@ -2076,6 +2076,16 @@ void nds_set_key_mask(uint32_t mask) {
         nds_apply_guest_keys(mask);
 }
 
+void nds_set_lid_closed(bool closed) {
+    const bool was_closed = g_keyinput & (1u << 23);  // EXTKEYIN bit 7
+    if (closed) {
+        g_keyinput |= 1u << 23;
+    } else {
+        g_keyinput &= ~(1u << 23);
+        if (was_closed) nds_raise_irq(1, 1u << 22);  // IRQ_LidOpen
+    }
+}
+
 void nds_apply_guest_keys(uint32_t mask) {
     const uint32_t key_lo = mask & 0x03FFu;
     const uint32_t key_hi = (mask >> 10) & 0x3u;
