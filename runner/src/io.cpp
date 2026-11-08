@@ -1166,6 +1166,7 @@ uint8_t tsc_write(uint8_t v) {
         switch (v & 0x70u) {
             case 0x10: g_tsc_conv = g_tsc_y; break;   // TouchY channel
             case 0x50: g_tsc_conv = g_tsc_x; break;   // TouchX channel
+            case 0x60: g_tsc_conv = 0x800;  break;   // AUX (microphone): silence
             default:   g_tsc_conv = 0xFFF;  break;
         }
         if (v & 0x08u) g_tsc_conv &= 0x0FF0;          // 8-bit conversion mode
