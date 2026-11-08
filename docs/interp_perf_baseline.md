@@ -553,7 +553,8 @@ their landing also makes the decode share legible in a re-profile.
 `tier3.cpp:419` runs `sync_out(ic)` and then
 `runtime_call_should_return()` for **every taken non-call branch**,
 including every `B` closing a loop. `runtime_call_should_return`
-(`runtime_arm.cpp:1451`) walks the entire CRS depth and, for a plain
+(`runtime_arm.cpp:1451`) walks the entire CRS depth (now at most its top 64
+entries, the stack trimmed to them on a deep miss) and, for a plain
 branch, is guaranteed to miss — the cost is O(call depth) per loop
 back-edge. The generated banks never pay this: their intra-function
 branches are local `goto`s. The code already knows the case is special
