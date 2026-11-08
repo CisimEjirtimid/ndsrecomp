@@ -2074,7 +2074,13 @@ extern "C" int runtime_call_should_return(uint32_t target_pc) {
     uint32_t pc = target_pc & ~1u;
     uint32_t key = pc | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u);
     auto& stats = g_nds_dispatch_stats[g_nds_active];
-    for (uint32_t i = g_crs_depth; i != 0; --i) {
+    // A real return is near the top. Entries that leak below it (the stack
+    // is a hint, and overflow drops them anyway) must not make every miss
+    // walk the whole stack, nor every context switch copy it: at a depth of
+    // thousands that is most of a frame.
+    constexpr uint32_t kCrsScan = 64u;
+    const uint32_t scan_end = g_crs_depth > kCrsScan ? g_crs_depth - kCrsScan : 0u;
+    for (uint32_t i = g_crs_depth; i != scan_end; --i) {
         ++stats.crs_scan_iters;
         if (g_crs[i - 1u] == key) {
             ++stats.crs_hit;
@@ -2087,6 +2093,11 @@ extern "C" int runtime_call_should_return(uint32_t target_pc) {
     runtime_trace_event(RUNTIME_TRACE_CALL, pc,
         g_crs_depth ? (g_crs[g_crs_depth - 1u] & ~1u) : 0xFFFFFFFFu,
         g_crs_depth, 3u);
+    if (g_crs_depth > 2u * kCrsScan) {
+        std::memmove(g_crs, g_crs + (g_crs_depth - kCrsScan),
+                     kCrsScan * sizeof(g_crs[0]));
+        g_crs_depth = kCrsScan;
+    }
     return 0;
 }
 extern "C" void runtime_call_cancel_return(uint32_t return_pc) {
