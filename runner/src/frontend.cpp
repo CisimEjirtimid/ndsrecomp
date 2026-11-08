@@ -5120,6 +5120,18 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     release_relative_mouse();
     nds_set_touch(0, 0, false);
     nds_set_key_mask(0x0FFFu);
+    if (!options.exit_state_path.empty()) {
+        std::string error;
+        const bool saved =
+            nds_savestate_check_eligibility(&error) &&
+            nds_savestate_save_core(
+                options.exit_state_path,
+                {options.savestate_build_id, options.savestate_rom_sha1}, &error);
+        std::fprintf(stderr, "[savestate] %s %s%s%s\n",
+                     saved ? "saved" : "could not save",
+                     options.exit_state_path.c_str(), saved ? "" : ": ",
+                     saved ? "" : error.c_str());
+    }
     g_live_stats.active = 0;
     g_input_debug.active = 0;
     nds_diagnostics_stop_performance_log();
