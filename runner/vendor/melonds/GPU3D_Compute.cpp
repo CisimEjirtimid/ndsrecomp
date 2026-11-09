@@ -24,6 +24,7 @@
 #include "OpenGLSupport.h"
 
 #include "GPU3D_Compute_shaders.h"
+#include "../../src/melonds_compute/TextureUpscale.h"
 
 namespace melonDS
 {
@@ -715,6 +716,11 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
         }
         RenderPolygons[i].Variant = prevVariant;
         RenderPolygons[i].TextureLayer = (float)prevTexLayer;
+        {
+            const u32 format = (polygon->TexParam >> 26) & 0x7;
+            RenderPolygons[i].TexFlags = ((polygon->TexParam >> 16) & 0xF)
+                | ((format == 1 || format == 6) ? 0x10 : 0);
+        }
 
         if (polygon->FacingView)
         {
@@ -1035,9 +1041,13 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
 
                 glUniform1ui(UniformIdxCurVariant, i);
                 if (variants[i].Texture != 0)
+                {
                     glUniform2f(UniformIdxTextureSize,
                         1.f / variants[i].Width,
                         1.f / variants[i].Height);
+                    glUniform1i(UniformIdxTextureFiltering,
+                        nds_texture_sampling() == NdsTextureSampling::Filtered ? 1 : 0);
+                }
                 glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, BinResultMemory);
                 glDispatchComputeIndirect(offsetof(BinResultHeader, VariantWorkCount) + i*4*4);
             }

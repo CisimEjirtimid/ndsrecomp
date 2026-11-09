@@ -10,6 +10,12 @@ NdsTextureFilter nds_texture_filter() {
     return NdsTextureFilter::Original;
 }
 
+void nds_texture_set_sampling(NdsTextureSampling) {}
+
+NdsTextureSampling nds_texture_sampling() {
+    return NdsTextureSampling::Nearest;
+}
+
 void nds_texture_pack_set_dir(const std::string&) {}
 
 bool nds_texture_pack_available() {

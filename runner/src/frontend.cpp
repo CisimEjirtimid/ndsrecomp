@@ -1193,6 +1193,7 @@ constexpr const char* kRuntimeMouseSensitivityKey =
 constexpr const char* kRuntimeScreenLayoutKey = "display.screen_layout";
 constexpr const char* kRuntimeTextureFilterKey = "display.texture_filter";
 constexpr const char* kRuntimeTexturePackKey = "display.texture_pack";
+constexpr const char* kRuntimeTextureSamplingKey = "display.texture_sampling";
 constexpr const char* kRuntimeResumeKey = "system.resume";
 constexpr const char* kRuntimeQuitKey = "system.quit";
 
@@ -1225,6 +1226,9 @@ void nds_frontend_apply_texture_options(const NdsFrontendOptions& options) {
     nds_texture_pack_set_dir(options.texture_pack_dir);
     nds_texture_pack_set_enabled(options.texture_pack);
     nds_texture_dump_set_dir(options.texture_dump_dir);
+    nds_texture_set_sampling(options.texture_sampling == 1
+                                 ? NdsTextureSampling::Filtered
+                                 : NdsTextureSampling::Nearest);
 }
 
 namespace {
@@ -1292,6 +1296,10 @@ int runtime_menu_get_value(void* context, const RecompRuntimeUiItem* item,
         *value_out = state->options->texture_pack ? 1 : 0;
         return 1;
     }
+    if (std::strcmp(item->key, kRuntimeTextureSamplingKey) == 0) {
+        *value_out = state->options->texture_sampling;
+        return 1;
+    }
     return 0;
 }
 
@@ -1329,6 +1337,15 @@ int runtime_menu_set_value(void* context, const RecompRuntimeUiItem* item,
         state->textures_chosen = true;
         return 1;
     }
+    if (std::strcmp(item->key, kRuntimeTextureSamplingKey) == 0) {
+        if (value < 0 || value > 1) return 0;
+        // A shader switch: no texture cache to rebuild.
+        state->options->texture_sampling = static_cast<uint8_t>(value);
+        nds_texture_set_sampling(value == 1 ? NdsTextureSampling::Filtered
+                                            : NdsTextureSampling::Nearest);
+        state->textures_chosen = true;
+        return 1;
+    }
     return 0;
 }
 
@@ -1353,7 +1370,8 @@ int runtime_menu_is_enabled(void* context, const RecompRuntimeUiItem* item) {
         return state->options->relative_mouse_touch ? 1 : 0;
     // Textures live in the accelerated renderer's cache; a pack needs its
     // folder.
-    if (std::strcmp(item->key, kRuntimeTextureFilterKey) == 0)
+    if (std::strcmp(item->key, kRuntimeTextureFilterKey) == 0 ||
+        std::strcmp(item->key, kRuntimeTextureSamplingKey) == 0)
         return nds_gpu3d_is_accelerated() ? 1 : 0;
     if (std::strcmp(item->key, kRuntimeTexturePackKey) == 0)
         return nds_gpu3d_is_accelerated() && nds_texture_pack_available() ? 1
@@ -1378,7 +1396,11 @@ void runtime_menu_save(void* context) {
               texture_filter_smooth(*state->options) ? "smooth"
                                                      : "original") &&
           save_runtime_setting(path, "texture_pack",
-                               state->options->texture_pack ? "on" : "off")))) {
+                               state->options->texture_pack ? "on" : "off") &&
+          save_runtime_setting(path, "texture_sampling",
+                               state->options->texture_sampling == 1
+                                   ? "filtered"
+                                   : "nearest")))) {
         std::fprintf(stderr, "[sdl] saved runtime settings\n");
     }
 }
@@ -3216,6 +3238,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     static const char* const runtime_texture_filter_choices[] = {
         "Original", "Smooth"};
     static const char* const runtime_off_on_choices[] = {"Off", "On"};
+    static const char* const runtime_texture_sampling_choices[] = {
+        "Nearest", "Filtered"};
     static const RecompRuntimeUiItem runtime_menu_items[] = {
         {kRuntimeScreenLayoutKey, "Display", "Screen layout",
          "Book turns screens for sideways play.",
@@ -3229,6 +3253,11 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
          "Replacement textures from the texture pack folder.",
          RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, runtime_off_on_choices, 2,
          nullptr},
+        {kRuntimeTextureSamplingKey, "Display", "Texture sampling",
+         "Nearest is the DS's own; Filtered smooths textures drawn smaller "
+         "or larger than their texels.",
+         RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, runtime_texture_sampling_choices,
+         2, nullptr},
         {kRuntimeMouseSensitivityKey, "Input", "Mouse sensitivity",
          "Relative-mouse stylus and aim speed.",
          RECOMP_RUNTIME_UI_INT, 10, 400, 1, nullptr, 0, nullptr},

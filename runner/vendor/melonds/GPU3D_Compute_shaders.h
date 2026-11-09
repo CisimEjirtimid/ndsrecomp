@@ -259,6 +259,8 @@ struct Polygon
     uint Attr;
 
     float TextureLayer;
+
+    uint TexFlags;
 };
 
 layout (std430, binding = 0) readonly buffer PolygonBuffer
@@ -1066,6 +1068,125 @@ layout (binding = 0) uniform usampler2DArray CurrentTexture;
 
 layout (location = 0) uniform uint CurVariant;
 layout (location = 1) uniform vec2 InvTextureSize;
+layout (location = 2) uniform int TextureFiltering;
+
+#ifdef UseTexture
+// Host texture filtering (patch 0020; TextureFiltering, off by default).
+// The DS samples the nearest texel. An upscaled texture drawn smaller than
+// its texels then aliases (thin lines break into ticks, fine patterns
+// crawl), and one drawn larger shows its texel grid. Filtered, a pixel
+// averages the texels its footprint covers: bilinear when it covers at most
+// one, else up to 4x4 samples spread along its two edges. Colour is
+// weighted by alpha; textures whose alpha is cut out (all but A3I5 and
+// A5I3) keep it cut out at half coverage, so opaque polygons stay opaque.
+
+int TexWrapAxis(int p, int size, uint flags, uint repeatBit, uint flipBit)
+{
+    if ((flags & repeatBit) == 0U)
+        return clamp(p, 0, size - 1);
+    if ((flags & flipBit) == 0U)
+        return p & (size - 1);
+    int q = p & (2 * size - 1);
+    return q < size ? q : 2 * size - 1 - q;
+}
+
+uvec4 TexFetch(ivec2 p, ivec2 size, int layer, uint flags)
+{
+    p = ivec2(TexWrapAxis(p.x, size.x, flags, 1U, 4U),
+              TexWrapAxis(p.y, size.y, flags, 2U, 8U));
+    return texelFetch(CurrentTexture, ivec3(p, layer), 0);
+}
+
+void TexAccumulate(inout vec4 acc, inout float weight, uvec4 t, float w)
+{
+    float a = float(t.a) * w;
+    acc.rgb += vec3(t.rgb) * a;
+    acc.a += a;
+    weight += w;
+}
+
+// The texture coordinates (1/16 texel) at column x of a span, x in
+// X0..X1-1, interpolated as the pixel's own are.
+ivec2 TexcoordAt(XSpanSetup span, int x)
+{
+    if (span.X0 == span.X1)
+        return ivec2(span.TexcoordU0, span.TexcoordV0);
+    if ((span.Flags & XSpanSetup_Linear) == 0U)
+    {
+        int ifactor = CalcYFactorX(span, x);
+        return ivec2(InterpolateAttrPersp(span.TexcoordU0, span.TexcoordU1, ifactor),
+                     InterpolateAttrPersp(span.TexcoordV0, span.TexcoordV1, ifactor));
+    }
+    int idiff = span.X1 - span.X0;
+    int i = x - span.X0;
+    return ivec2(InterpolateAttrLinear(span.TexcoordU0, span.TexcoordU1, i, span.XRecip, idiff),
+                 InterpolateAttrLinear(span.TexcoordV0, span.TexcoordV1, i, span.XRecip, idiff));
+}
+
+uvec4 SampleFiltered(Polygon polygon, XSpanSetup xspan, ivec2 position, ivec2 uv)
+{
+    ivec2 size = textureSize(CurrentTexture, 0).xy;
+    // Storage texels per DS texel (the texture cache's upscale factor).
+    vec2 scale = vec2(size) * InvTextureSize * (1.0 / 16.0);
+    vec2 st = vec2(uv) * scale;
+
+    // The footprint: the texture coordinates one pixel across and one down
+    // (or back, at the polygon's last column or row).
+    vec2 dx = vec2(0.0), dy = vec2(0.0);
+    if (xspan.X1 - xspan.X0 >= 2)
+    {
+        int x1 = position.x + 1 < xspan.X1 ? position.x + 1 : position.x - 1;
+        x1 = clamp(x1, xspan.X0, xspan.X1 - 1);
+        if (x1 != position.x)
+            dx = (vec2(TexcoordAt(xspan, x1)) * scale - st) * float(x1 - position.x);
+    }
+    int y1 = position.y + 1 < polygon.YBot ? position.y + 1 : position.y - 1;
+    if (y1 >= polygon.YTop && y1 < polygon.YBot)
+    {
+        XSpanSetup next = XSpanSetups[polygon.FirstXSpan + (y1 - polygon.YTop)];
+        if (next.X1 > next.X0)
+        {
+            int x = clamp(position.x, next.X0, next.X1 - 1);
+            dy = (vec2(TexcoordAt(next, x)) * scale - st) * float(y1 - position.y);
+        }
+    }
+    float footprint = max(length(dx), length(dy));
+
+    int layer = int(polygon.TextureLayer);
+    uint flags = polygon.TexFlags;
+    vec4 acc = vec4(0.0);
+    float weight = 0.0;
+    if (footprint <= 1.0)
+    {
+        vec2 p = st - 0.5;
+        ivec2 i0 = ivec2(floor(p));
+        vec2 f = p - vec2(i0);
+        TexAccumulate(acc, weight, TexFetch(i0, size, layer, flags), (1.0 - f.x) * (1.0 - f.y));
+        TexAccumulate(acc, weight, TexFetch(i0 + ivec2(1, 0), size, layer, flags), f.x * (1.0 - f.y));
+        TexAccumulate(acc, weight, TexFetch(i0 + ivec2(0, 1), size, layer, flags), (1.0 - f.x) * f.y);
+        TexAccumulate(acc, weight, TexFetch(i0 + ivec2(1, 1), size, layer, flags), f.x * f.y);
+    }
+    else
+    {
+        int n = min(int(ceil(footprint)), 4);
+        for (int j = 0; j < n; j++)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                vec2 o = (vec2(i, j) + 0.5) / float(n) - 0.5;
+                vec2 p = st + dx * o.x + dy * o.y;
+                TexAccumulate(acc, weight, TexFetch(ivec2(floor(p)), size, layer, flags), 1.0);
+            }
+        }
+    }
+
+    float alpha = acc.a / weight;
+    vec3 rgb = acc.a > 0.0 ? acc.rgb / acc.a : vec3(0.0);
+    if ((flags & 0x10U) == 0U)
+        alpha = alpha >= 15.5 ? 31.0 : 0.0;
+    return uvec4(uvec3(rgb + 0.5), uint(alpha + 0.5));
+}
+#endif
 
 void main()
 {
@@ -1192,9 +1313,16 @@ void main()
             b = vb;
 
 #ifdef UseTexture
-            vec2 uvf = vec2(ivec2(u, v)) * vec2(1.0 / 16.0) * InvTextureSize;
-
-            uvec4 texcolor = texture(CurrentTexture, vec3(uvf, polygon.TextureLayer));
+            uvec4 texcolor;
+            if (TextureFiltering != 0)
+            {
+                texcolor = SampleFiltered(polygon, xspan, position, ivec2(u, v));
+            }
+            else
+            {
+                vec2 uvf = vec2(ivec2(u, v)) * vec2(1.0 / 16.0) * InvTextureSize;
+                texcolor = texture(CurrentTexture, vec3(uvf, polygon.TextureLayer));
+            }
 #ifdef Decal
             if (texcolor.a == 31)
             {

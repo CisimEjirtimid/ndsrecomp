@@ -38,6 +38,14 @@ enum class NdsTextureFilter : uint8_t { Original = 0, Smooth = 1 };
 void nds_texture_upscale_set_factor(int factor);
 void nds_texture_set_filter(NdsTextureFilter filter);
 NdsTextureFilter nds_texture_filter();
+
+// How the compute renderer samples textures. Nearest is the DS's own: one
+// texel per pixel. Filtered averages the texels a pixel's footprint covers
+// (bilinear up close, up to 4x4 samples when the texture is drawn smaller),
+// for upscaled textures that otherwise alias. Applies from the next frame.
+enum class NdsTextureSampling : uint8_t { Nearest = 0, Filtered = 1 };
+void nds_texture_set_sampling(NdsTextureSampling sampling);
+NdsTextureSampling nds_texture_sampling();
 // The pack directory ("" = none) and whether it is used.
 void nds_texture_pack_set_dir(const std::string& dir);
 bool nds_texture_pack_available();

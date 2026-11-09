@@ -227,6 +227,14 @@ bool nds_parse_texture_filter(const std::string& value, uint8_t* out) {
     return true;
 }
 
+bool nds_parse_texture_sampling(const std::string& value, uint8_t* out) {
+    if (!out) return false;
+    if (value == "nearest") *out = 0;
+    else if (value == "filtered") *out = 1;
+    else return false;
+    return true;
+}
+
 bool nds_parse_texture_upscale(const std::string& value, uint8_t* out) {
     if (!out || value.empty()) return false;
     char* end = nullptr;
@@ -784,6 +792,16 @@ bool nds_load_frontend_config(const std::string& path,
                 if (error) {
                     *error =
                         "display.texture_filter must be original or smooth";
+                }
+                return false;
+            }
+        }
+        if (const auto value =
+                (*display)["texture_sampling"].value<std::string>()) {
+            if (!nds_parse_texture_sampling(*value, &options->texture_sampling)) {
+                if (error) {
+                    *error =
+                        "display.texture_sampling must be nearest or filtered";
                 }
                 return false;
             }

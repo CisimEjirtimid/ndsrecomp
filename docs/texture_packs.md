@@ -19,6 +19,24 @@ The default follows `[display] texture_upscale` (above 1 means Smooth), or
 choice (saved as `texture_filter=` in the runtime settings file), then
 `--texture-filter`.
 
+## Sampling
+
+Esc menu **Display > Texture sampling** (live, no cache rebuild):
+
+- **Nearest**: the DS's own, one texel per pixel. An upscaled texture drawn
+  smaller than its texels then aliases: thin lines break into ticks, fine
+  patterns crawl as the view moves.
+- **Filtered**: each pixel averages the texels its footprint covers,
+  bilinear up close and up to 4x4 samples when the texture is drawn
+  smaller, colour weighted by alpha. Cut-out textures (every format but
+  A3I5 and A5I3) stay cut out, so opaque surfaces stay opaque.
+
+Nearest by default; `[display] texture_sampling = "nearest" | "filtered"`,
+then the player's menu choice (saved as `texture_sampling=`), then
+`--texture-sampling`. It is a shader switch in the compute renderer
+(vendored melonDS patch 0020), so it costs no texture memory; the
+software renderer always samples nearest.
+
 ## Texture packs
 
 `--texture-pack DIR` names the pack folder. Esc menu **Display > Texture

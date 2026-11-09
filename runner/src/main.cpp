@@ -402,6 +402,7 @@ int main(int argc, char** argv) {
     std::string cli_internal_resolution;
     std::string cli_texture_upscale;
     std::string cli_texture_filter;
+    std::string cli_texture_sampling;
     std::string cli_texture_pack;
     std::string cli_texture_dump;
     std::string cli_antialiasing;
@@ -551,6 +552,8 @@ int main(int argc, char** argv) {
             cli_texture_upscale = argv[++i];
         } else if (a == "--texture-filter" && i + 1 < argc) {
             cli_texture_filter = argv[++i];
+        } else if (a == "--texture-sampling" && i + 1 < argc) {
+            cli_texture_sampling = argv[++i];
         } else if (a == "--texture-pack" && i + 1 < argc) {
             cli_texture_pack = argv[++i];
         } else if (a == "--texture-dump" && i + 1 < argc) {
@@ -710,6 +713,7 @@ int main(int argc, char** argv) {
                 "[--internal-resolution 1|2|3|4] "
                 "[--texture-upscale 1|2|4] "
                 "[--texture-filter original|smooth] "
+                "[--texture-sampling nearest|filtered] "
                 "[--texture-pack DIR] [--texture-dump DIR] "
                 "[--antialiasing 0|2|4|8] "
                 "[--frame-interpolation off|blend] "
@@ -797,6 +801,10 @@ int main(int argc, char** argv) {
         if (nds_load_runtime_setting(cli_runtime_settings_path,
                                      "texture_filter", &value))
             nds_parse_texture_filter(value, &frontend_options.texture_filter);
+        if (nds_load_runtime_setting(cli_runtime_settings_path,
+                                     "texture_sampling", &value))
+            nds_parse_texture_sampling(value,
+                                       &frontend_options.texture_sampling);
         if (nds_load_runtime_setting(cli_runtime_settings_path,
                                      "texture_pack", &value))
             frontend_options.texture_pack = value != "off";
@@ -995,6 +1003,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "invalid --texture-filter (expected original or "
                      "smooth)\n");
+        return 2;
+    }
+    if (!cli_texture_sampling.empty() &&
+        !nds_parse_texture_sampling(cli_texture_sampling,
+                                    &frontend_options.texture_sampling)) {
+        std::fprintf(stderr,
+                     "invalid --texture-sampling (expected nearest or "
+                     "filtered)\n");
         return 2;
     }
     if (!cli_texture_pack.empty())

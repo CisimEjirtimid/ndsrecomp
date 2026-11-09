@@ -284,6 +284,13 @@ struct NdsFrontendOptions {
     // follow texture_upscale (> 1 means smooth). TOML texture_filter, then
     // the runtime settings file, then --texture-filter.
     uint8_t texture_filter = 2;
+    // How the 3D renderer samples textures (Esc menu Display > Texture
+    // sampling): 0 nearest, the DS's own; 1 filtered, averaging the texels
+    // a pixel covers so upscaled textures do not alias when drawn smaller.
+    // TOML texture_sampling, then the runtime settings file, then
+    // --texture-sampling. Presentation only: the software renderer, and so
+    // every faithful comparison, always samples nearest.
+    uint8_t texture_sampling = 0;
     // Replacement textures (melonds_compute/TextureUpscale.h): the pack
     // folder, whether it is used (Esc menu Display > Texture pack; on by
     // default when the folder exists), and a folder that receives every
@@ -366,6 +373,8 @@ bool nds_load_runtime_setting(const std::string& path, const std::string& key,
                               std::string* out);
 // "original" -> 0, "smooth" -> 1 (NdsFrontendOptions::texture_filter).
 bool nds_parse_texture_filter(const std::string& value, uint8_t* out);
+// "nearest" -> 0, "filtered" -> 1 (NdsFrontendOptions::texture_sampling).
+bool nds_parse_texture_sampling(const std::string& value, uint8_t* out);
 // Hands the texture options to the texture cache (filter, factor, pack,
 // dump); they take effect when the 3D renderer builds its cache.
 void nds_frontend_apply_texture_options(const NdsFrontendOptions& options);
