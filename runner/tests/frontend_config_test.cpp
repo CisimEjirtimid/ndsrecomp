@@ -96,6 +96,14 @@ int main() {
             !require(!nds_parse_texture_filter("xbr", &filter)) ||
             !require(filter == 1))
             return 43;
+        uint8_t sampling = 7;
+        if (!require(nds_parse_texture_sampling("nearest", &sampling)) ||
+            !require(sampling == 0) ||
+            !require(nds_parse_texture_sampling("filtered", &sampling)) ||
+            !require(sampling == 1) ||
+            !require(!nds_parse_texture_sampling("bilinear", &sampling)) ||
+            !require(sampling == 1))
+            return 45;
         const std::filesystem::path settings =
             std::filesystem::temp_directory_path() /
             "ndsrecomp_runtime_texture_test.txt";
@@ -228,6 +236,7 @@ int main() {
                 "adaptive_hud_center_width = 128\n"
                 "supersampling = 3\n"
                 "antialiasing = 4\n"
+                "texture_sampling = \"filtered\"\n"
                 "[cartridge]\n"
                 "save_type = \"flash\"\n"
                 "save_size = 262144\n"
@@ -270,6 +279,7 @@ int main() {
         !require(options.adaptive_hud_center_width == 128) ||
         !require(options.supersampling == 3) ||
         !require(options.antialiasing == 4) ||
+        !require(options.texture_sampling == 1) ||
         !require(options.cartridge_save.type ==
                  NdsCartridgeSaveType::Flash) ||
         !require(options.cartridge_save.size == 262144) ||

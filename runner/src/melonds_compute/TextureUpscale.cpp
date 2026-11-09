@@ -581,6 +581,14 @@ void nds_texture_upscale_set_factor(int factor)
 
 void nds_texture_set_filter(NdsTextureFilter filter) { g_filter = filter; }
 
+namespace {
+NdsTextureSampling g_sampling = NdsTextureSampling::Nearest;
+}  // namespace
+
+void nds_texture_set_sampling(NdsTextureSampling sampling) { g_sampling = sampling; }
+
+NdsTextureSampling nds_texture_sampling() { return g_sampling; }
+
 NdsTextureFilter nds_texture_filter() { return g_filter; }
 
 void nds_texture_pack_set_dir(const std::string& dir)

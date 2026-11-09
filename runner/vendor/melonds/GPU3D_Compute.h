@@ -179,6 +179,10 @@ private:
         u32 Attr;
 
         float TextureLayer;
+        // Host texture filtering (0020): TEXIMAGE_PARAM's repeat and flip
+        // bits (bits 0-3: S, T repeat, S, T flip) and bit 4 set for the
+        // formats with graded alpha (A3I5, A5I3).
+        u32 TexFlags;
     };
 
     static constexpr int TileSize = 8;
@@ -194,6 +198,7 @@ private:
 
     static constexpr int UniformIdxCurVariant = 0;
     static constexpr int UniformIdxTextureSize = 1;
+    static constexpr int UniformIdxTextureFiltering = 2;
 
     static constexpr int MaxFullscreenLayers = 16;
 

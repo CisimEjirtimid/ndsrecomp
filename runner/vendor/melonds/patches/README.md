@@ -449,3 +449,22 @@ activity are deliberately not used as connection proxies.
 Together with the runner bridge marking a peer only after receipt of a
 validated local datagram, this gives the save-state guard an explicit peer
 start/end lifecycle without treating UDP `sendto()` success as a connection.
+
+## 0020-gpu3d-compute-texture-filtering.patch
+
+`src/GPU3D_Compute.{h,cpp}` and `src/GPU3D_Compute_shaders.h`: an optional
+host texture filter for the compute renderer (`TextureFiltering`, set per
+textured variant from `nds_texture_sampling()`, off by default). The DS
+samples the nearest texel; a texture upscaled by the texture cache (or a
+pack) and drawn smaller than its texels then aliases, and one drawn larger
+shows its texel grid. Filtered, the rasteriser takes the pixel's footprint
+from the texture coordinates one column across and one row down (the next
+row's `XSpanSetup`, interpolated as the pixel's own) and averages the texels
+it covers: bilinear when it covers at most one, else up to 4x4 nearest
+samples spread along its two edges, colour weighted by alpha. Wrap, clamp
+and flip are applied by hand (`texelFetch`), from TEXIMAGE_PARAM bits the
+polygon now carries (`RenderPolygon::TexFlags`, bit 4 for the graded-alpha
+formats A3I5 and A5I3). Every other format keeps its alpha cut out at half
+coverage, so opaque polygons stay opaque and translucency sorting is
+untouched. Off, the sampling is byte-for-byte the previous `texture()` call;
+the software renderer never filters.
