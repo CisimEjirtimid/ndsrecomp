@@ -123,11 +123,13 @@ bool validate_gpu3d_device(const melonDS::GPU3D& gpu,
     return true;
 }
 
-// Internal-resolution (HD) multiplier for the accelerated renderer. 4x of a
-// 448-wide adaptive raster is 1792x768; the compute renderer's tile and span
-// buffers grow with it, so this is deliberately capped well below what the
-// shader constants would otherwise permit.
-constexpr uint8_t kMaxInternalScale = 4u;
+// Internal-resolution (HD) multiplier for the accelerated renderer. 8x of a
+// 448-wide adaptive raster is 3584x1536. The compute renderer's tile
+// buffers grow with the square of it (three of 64 * 4 bytes a work tile:
+// about 1 GB at 8x and 448 wide, a quarter of that at 4x), and a work
+// descriptor numbers a variant's work tiles in 21 bits, which that raster
+// outgrows past 9x: hence the cap.
+constexpr uint8_t kMaxInternalScale = 8u;
 uint8_t g_internal_scale = 1u;
 #if defined(NDS_HAVE_COMPUTE_RENDERER)
 bool g_display_readback_latency = false;

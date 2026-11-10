@@ -268,7 +268,7 @@ struct NdsFrontendOptions {
     // they never alter guest-visible DS rasterization or framebuffer bytes.
     uint8_t supersampling = 1;  // 1x..4x presentation reconstruction
     uint8_t antialiasing = 0;   // 0/2/4/8 sample-quality preset
-    // Internal-resolution (HD) 3D scaling, 1x..4x. Unlike the two knobs
+    // Internal-resolution (HD) 3D scaling, 1x..8x. Unlike the two knobs
     // above this one is pre-composition: it raises the 3D engine's sample
     // density. It still alters no guest-visible bytes, because every
     // faithful consumer reads the native surface the same render pass
