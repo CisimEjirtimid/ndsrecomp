@@ -468,3 +468,20 @@ formats A3I5 and A5I3). Every other format keeps its alpha cut out at half
 coverage, so opaque polygons stay opaque and translucency sorting is
 untouched. Off, the sampling is byte-for-byte the previous `texture()` call;
 the software renderer never filters.
+
+## 0021-gpu3d-compute-rasterise-dispatch-rows.patch
+
+`src/GPU3D_Compute.{h,cpp}` and `src/GPU3D_Compute_shaders.h`: the
+rasterise pass runs one work group for each work tile of a variant, and
+upstream dispatches them along one dimension (`VariantWorkCount[i]`, read
+as `(1, 1, count)`). OpenGL guarantees 65535 work groups in a dimension; a
+variant covering the screen has that many work tiles past 6x internal
+resolution (73,728 at 8x of a 384-wide raster), and the tiles beyond the
+limit are not rasterised or the dispatch is dropped, which shows as tile
+garbage. `CalcOffsets` now also writes each variant's dispatch as rows of
+1024 work tiles (`BinResultHeader::VariantDispatch`, `(1, rows, row
+length, count)`; a separate array, since that pass adds to
+`VariantWorkCount[1].w` atomically), the rasterise pass is dispatched from
+it and numbers its work tile from the row and column, leaving the last
+row's spare groups at once. Up to 1024 work tiles in a variant the dispatch
+is the one upstream made.

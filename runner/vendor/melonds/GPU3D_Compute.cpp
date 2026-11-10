@@ -1049,7 +1049,7 @@ void ComputeRenderer::RenderFrame(GPU& gpu)
                         nds_texture_sampling() == NdsTextureSampling::Filtered ? 1 : 0);
                 }
                 glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, BinResultMemory);
-                glDispatchComputeIndirect(offsetof(BinResultHeader, VariantWorkCount) + i*4*4);
+                glDispatchComputeIndirect(offsetof(BinResultHeader, VariantDispatch) + i*4*4);
             }
         }
     }

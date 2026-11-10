@@ -278,6 +278,9 @@ layout (std430, binding = 6) buffer BinResultBuffer
 
     uvec4 SortWorkWorkCount;
 
+    // ndsrecomp: (1, rows, row length, work tiles) of each variant
+    uvec4 VariantDispatch[MaxVariants];
+
     uint BinningMaskAndOffset[];
     //uint BinnedMaskCoarse[TilesPerLine*TileLines*CoarseBinStride];
     //uint BinnedMask[TilesPerLine*TileLines*BinStride];
@@ -355,6 +358,8 @@ const int BinStride = 2048/32;
 const int CoarseBinStride = BinStride/32;
 
 const int MaxVariants = 256;
+// ndsrecomp: work tiles in a row of a variant's rasterise dispatch
+const int VariantDispatchRow = 1024;
 
 layout (std140, binding = 0) uniform MetaUniform
 {
@@ -1025,7 +1030,15 @@ void main()
             // a bit of a cheat putting this here, but this shader won't run that often
             SortWorkWorkCount = uvec4((VariantWorkCount[0].w + 31) / 32, 1, 1, 0);
         }
-        SortedWorkOffset[gl_GlobalInvocationID.x] = atomicAdd(VariantWorkCount[1].w, VariantWorkCount[gl_GlobalInvocationID.x].z);
+        uint workCount = VariantWorkCount[gl_GlobalInvocationID.x].z;
+        SortedWorkOffset[gl_GlobalInvocationID.x] = atomicAdd(VariantWorkCount[1].w, workCount);
+        // ndsrecomp: one work group a tile, and a dispatch takes at most
+        // 65535 groups in a dimension, fewer than one variant's tiles at a
+        // high resolution: rows of VariantDispatchRow, the last one cut
+        // short by the rasteriser
+        VariantDispatch[gl_GlobalInvocationID.x] = uvec4(1U,
+            (workCount + uint(VariantDispatchRow - 1)) / uint(VariantDispatchRow),
+            min(workCount, uint(VariantDispatchRow)), workCount);
     }
 }
 
@@ -1190,7 +1203,11 @@ uvec4 SampleFiltered(Polygon polygon, XSpanSetup xspan, ivec2 position, ivec2 uv
 
 void main()
 {
-    uvec2 workDesc = WorkDescs[WorkDescsSortedStart + SortedWorkOffset[CurVariant] + gl_WorkGroupID.z];
+    // ndsrecomp: the variant's work tiles in rows (VariantDispatch)
+    uint workIdx = gl_WorkGroupID.y * uint(VariantDispatchRow) + gl_WorkGroupID.z;
+    if (workIdx >= VariantDispatch[CurVariant].w)
+        return;
+    uvec2 workDesc = WorkDescs[WorkDescsSortedStart + SortedWorkOffset[CurVariant] + workIdx];
     Polygon polygon = Polygons[bitfieldExtract(workDesc.y, 0, 11)];
     ivec2 position = ivec2(bitfieldExtract(workDesc.x, 0, 16), bitfieldExtract(workDesc.x, 16, 16)) + ivec2(gl_LocalInvocationID.xy);
     int tileOffset = int(bitfieldExtract(workDesc.y, 11, 21)) * TileSize * TileSize + TileSize * int(gl_LocalInvocationID.y) + int(gl_LocalInvocationID.x);

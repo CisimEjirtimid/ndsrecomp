@@ -208,6 +208,12 @@ private:
         u32 SortedWorkOffset[MaxVariants];
 
         u32 SortWorkWorkCount[4];
+
+        // ndsrecomp: the rasterise pass's indirect dispatch for each
+        // variant, (1, rows, row length, work tiles): a variant's work
+        // tiles laid out in rows of VariantDispatchRow, so that their
+        // number is not bound by the work group count of one dimension.
+        u32 VariantDispatch[MaxVariants*4];
     };
 
     static const int MaxYSpanSetups = 6144*2;

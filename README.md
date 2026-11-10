@@ -273,7 +273,9 @@ overrides are
 `--screen-layout` / `--adaptive-widescreen` CLI flags. Precedence is TOML,
 then environment, then CLI.
 
-`internal_resolution` (2-4, OpenGL compute renderer) also reaches titles that
+`internal_resolution` (2-8, OpenGL compute renderer; above 4 for windows
+larger than the 4x raster, at a cost in GPU memory and frame time that
+grows with its square) also reaches titles that
 show their 3D through display capture: the engine-A composite captured into
 a VRAM bank (often blended with that bank for motion blur) and displayed in
 VRAM mode, as Hotel Dusk does. The runner keeps a host-only shadow of the

@@ -710,7 +710,7 @@ int main(int argc, char** argv) {
                 "[--adaptive-widescreen none|top|bottom|both] "
                 "[--widescreen-width even:256..448] "
                 "[--supersampling 1|2|3|4] "
-                "[--internal-resolution 1|2|3|4] "
+                "[--internal-resolution 1..8] "
                 "[--texture-upscale 1|2|4] "
                 "[--texture-filter original|smooth] "
                 "[--texture-sampling nearest|filtered] "
@@ -880,7 +880,7 @@ int main(int argc, char** argv) {
                 value, &frontend_options.internal_resolution)) {
             std::fprintf(stderr,
                          "invalid NDS_INTERNAL_RESOLUTION "
-                         "(expected 1..4)\n");
+                         "(expected 1..8)\n");
             return 2;
         }
     }
@@ -1030,7 +1030,7 @@ int main(int argc, char** argv) {
             cli_internal_resolution,
             &frontend_options.internal_resolution)) {
         std::fprintf(stderr,
-                     "invalid --internal-resolution (expected 1..4)\n");
+                     "invalid --internal-resolution (expected 1..8)\n");
         return 2;
     }
     if (!cli_antialiasing.empty() &&
