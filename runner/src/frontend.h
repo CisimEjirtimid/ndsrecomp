@@ -311,6 +311,9 @@ struct NdsFrontendOptions {
     // Tab can be safely used by game-specific bindings such as MPH's virtual
     // stylus.
     bool tab_turbo = false;
+    // --mic host: the PC's recording device feeds the DS microphone. Off by
+    // default (silence; hold M to blow).
+    bool host_microphone = false;
     uint16_t relative_mouse_sensitivity = 100;  // 10%..400%
     bool relative_mouse_invert_y = false;
     // Active-high frontend pressed-bit mask (same layout as key_bit()).

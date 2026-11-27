@@ -1158,6 +1158,45 @@ void pm_release() { g_pm_hold = false; }
 // is reported via EXTKEYIN bit6 (pen-up here); the ADC just needs stable values.
 uint8_t  g_tsc_ctrl = 0; uint16_t g_tsc_conv = 0xFFF; int g_tsc_datapos = 0;
 uint16_t g_tsc_x = 0, g_tsc_y = 0xFFF;   // pen up
+
+// Microphone (the TSC's AUX channel). Silent (0x800, as melonDS without
+// input) unless the host feeds it: a frame of signed 16-bit samples, picked by
+// how far into the frame the conversion falls (melonDS TSC::MicInputFrame /
+// the 0x60 channel), or "blowing", a breath-like noise generated here while
+// the host holds it on. Host input only: none of it is in a savestate.
+constexpr uint32_t kMicFrameCycles = 560190u;   // 263 lines x 2130 cycles
+constexpr int kMicMaxSamples = 1024;
+int16_t  g_mic_buffer[kMicMaxSamples];
+int      g_mic_len = 0;
+uint64_t g_mic_frame_start = 0;
+std::atomic<bool> g_mic_blow{false};
+uint32_t g_mic_noise_seed = 0x2545F491u;
+int32_t  g_mic_noise_lp = 0;
+
+int16_t mic_blow_sample() {
+    // White noise through a one-pole low-pass: air across a microphone is a
+    // loud rumble rather than a hiss. Full scale, so a level check passes.
+    g_mic_noise_seed = g_mic_noise_seed * 1664525u + 1013904223u;
+    const int32_t white = static_cast<int32_t>(g_mic_noise_seed >> 16) - 0x8000;
+    g_mic_noise_lp += (white - g_mic_noise_lp) / 2;
+    return static_cast<int16_t>(std::clamp(g_mic_noise_lp * 2, -0x8000, 0x7FFF));
+}
+
+uint16_t mic_conversion() {
+    int16_t sample;
+    if (g_mic_blow.load(std::memory_order_relaxed)) {
+        sample = mic_blow_sample();
+    } else if (g_mic_len > 0) {
+        const uint64_t since = scheduler_system_timestamp() - g_mic_frame_start;
+        uint64_t pos = since * static_cast<uint64_t>(g_mic_len) / kMicFrameCycles;
+        if (pos >= static_cast<uint64_t>(g_mic_len)) pos = g_mic_len - 1;
+        sample = g_mic_buffer[pos];
+    } else {
+        return 0x800;
+    }
+    return static_cast<uint16_t>(static_cast<uint16_t>(sample) ^ 0x8000u) >> 4;
+}
+
 uint8_t tsc_write(uint8_t v) {
     uint8_t out = (g_tsc_datapos == 1) ? ((g_tsc_conv >> 5) & 0xFFu)
                 : (g_tsc_datapos == 2) ? ((g_tsc_conv << 3) & 0xFFu) : 0u;
@@ -1166,7 +1205,7 @@ uint8_t tsc_write(uint8_t v) {
         switch (v & 0x70u) {
             case 0x10: g_tsc_conv = g_tsc_y; break;   // TouchY channel
             case 0x50: g_tsc_conv = g_tsc_x; break;   // TouchX channel
-            case 0x60: g_tsc_conv = 0x800;  break;   // AUX (microphone): silence
+            case 0x60: g_tsc_conv = mic_conversion(); break;   // AUX (microphone)
             default:   g_tsc_conv = 0xFFF;  break;
         }
         if (v & 0x08u) g_tsc_conv &= 0x0FF0;          // 8-bit conversion mode
@@ -2084,6 +2123,22 @@ void nds_set_lid_closed(bool closed) {
         g_keyinput &= ~(1u << 23);
         if (was_closed) nds_raise_irq(1, 1u << 22);  // IRQ_LidOpen
     }
+}
+
+void nds_mic_input_frame(const int16_t* samples, int count) {
+    if (!samples || count <= 0) { g_mic_len = 0; return; }
+    count = std::min(count, kMicMaxSamples);
+    std::memcpy(g_mic_buffer, samples, sizeof(int16_t) * count);
+    g_mic_len = count;
+    g_mic_frame_start = scheduler_system_timestamp();
+}
+
+void nds_mic_set_blow(bool on) {
+    g_mic_blow.store(on, std::memory_order_relaxed);
+}
+
+bool nds_mic_blowing() {
+    return g_mic_blow.load(std::memory_order_relaxed);
 }
 
 void nds_apply_guest_keys(uint32_t mask) {

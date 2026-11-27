@@ -2128,6 +2128,10 @@ std::string handle(const std::string& line) {
         nds_set_lid_closed(json_bool(line, "closed", true));
         return "{\"ok\":true}";
     }
+    if (cmd == "mic") {
+        nds_mic_set_blow(json_bool(line, "blow", true));
+        return "{\"ok\":true}";
+    }
     if (cmd == "turbo") {
         nds_set_debug_turbo(json_bool(line, "on", true));
         return "{\"ok\":true}";

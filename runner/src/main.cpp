@@ -409,6 +409,7 @@ int main(int argc, char** argv) {
     std::string cli_frame_interpolation;
     std::string cli_relative_mouse_touch;
     std::string cli_tab_turbo;
+    std::string cli_mic;
     std::string cli_relative_mouse_sensitivity;
     std::string cli_relative_mouse_invert_y;
     std::string cli_relative_mouse_fire_key;
@@ -566,6 +567,8 @@ int main(int argc, char** argv) {
             cli_relative_mouse_touch = argv[++i];
         } else if (a == "--tab-turbo" && i + 1 < argc) {
             cli_tab_turbo = argv[++i];
+        } else if (a == "--mic" && i + 1 < argc) {
+            cli_mic = argv[++i];
         } else if (a == "--relative-mouse-sensitivity" && i + 1 < argc) {
             cli_relative_mouse_sensitivity = argv[++i];
         } else if (a == "--relative-mouse-invert-y" && i + 1 < argc) {
@@ -718,7 +721,7 @@ int main(int argc, char** argv) {
                 "[--antialiasing 0|2|4|8] "
                 "[--frame-interpolation off|blend] "
                 "[--relative-mouse-touch on|off] "
-                "[--tab-turbo on|off] "
+                "[--tab-turbo on|off] [--mic host|off] "
                 "[--relative-mouse-sensitivity 10..400] "
                 "[--relative-mouse-invert-y on|off] "
                 "[--relative-mouse-fire-key none|a|b|l|r|x|y] "
@@ -1073,6 +1076,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "invalid --tab-turbo (expected on or off)\n");
         return 2;
+    }
+    if (!cli_mic.empty()) {
+        if (cli_mic == "host") {
+            frontend_options.host_microphone = true;
+        } else if (cli_mic != "off") {
+            std::fprintf(stderr, "invalid --mic (expected host or off)\n");
+            return 2;
+        }
     }
     if (!cli_relative_mouse_sensitivity.empty() &&
         !nds_parse_mouse_sensitivity(
