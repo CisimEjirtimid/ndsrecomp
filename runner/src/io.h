@@ -26,6 +26,14 @@ void     nds_set_key_mask(uint32_t mask);
 // The lid: closed sets EXTKEYIN's hinge bit; opening raises the ARM7's
 // lid-open IRQ, as on hardware.
 void     nds_set_lid_closed(bool closed);
+// The microphone. A frame of signed 16-bit samples from the host (melonDS's
+// MicInputFrame: a conversion reads the sample as far into the buffer as it
+// falls into the frame; nullptr or 0 = none, silence). Blowing, while on,
+// overrides it with a generated breath-like noise (a key, the `mic` debug
+// command, a plugin).
+void     nds_mic_input_frame(const int16_t* samples, int count);
+void     nds_mic_set_blow(bool on);
+bool     nds_mic_blowing();
 // Straight to the guest, bypassing an active title plugin's input latch.
 void     nds_apply_guest_touch(uint16_t x, uint16_t y, bool down);
 void     nds_apply_guest_keys(uint32_t mask);

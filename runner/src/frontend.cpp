@@ -1157,6 +1157,87 @@ NdsAudioDevice open_audio_device(AudioQueue& queue,
 #endif
 }
 
+// The host's microphone (--mic host): recorded at 44100 Hz mono, handed to
+// the TSC a frame at a time as melonDS's frontend does (735 samples a frame).
+// Opened only on request: a game never gets the PC's microphone by default.
+struct HostMic {
+#if defined(NDS_HAVE_SDL3)
+    SDL_AudioStream* stream = nullptr;
+    explicit operator bool() const { return stream != nullptr; }
+#else
+    SDL_AudioDeviceID device = 0;
+    explicit operator bool() const { return device != 0; }
+#endif
+    std::array<int16_t, 4096> pending{};
+    int frame_len = 0;
+};
+
+constexpr int kMicFrequency = 44100;
+constexpr int kMicFrameSamples = kMicFrequency / 60;   // 735
+
+bool open_host_mic(HostMic& mic) {
+    SDL_AudioSpec want{};
+    want.freq = kMicFrequency;
+    want.format = AUDIO_S16SYS;
+    want.channels = 1;
+#if defined(NDS_HAVE_SDL3)
+    mic.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING,
+                                           &want, nullptr, nullptr);
+    if (!mic.stream) return false;
+    SDL_ResumeAudioStreamDevice(mic.stream);
+#else
+    SDL_AudioSpec got{};
+    want.samples = 1024;
+    mic.device = SDL_OpenAudioDevice(nullptr, 1, &want, &got, 0);
+    if (!mic.device) return false;
+    if (got.freq != want.freq || got.format != want.format ||
+        got.channels != want.channels) {
+        SDL_CloseAudioDevice(mic.device);
+        mic.device = 0;
+        return false;
+    }
+    SDL_PauseAudioDevice(mic.device, 0);
+#endif
+    return true;
+}
+
+void close_host_mic(HostMic& mic) {
+#if defined(NDS_HAVE_SDL3)
+    if (mic.stream) SDL_DestroyAudioStream(mic.stream);
+    mic.stream = nullptr;
+#else
+    if (mic.device) SDL_CloseAudioDevice(mic.device);
+    mic.device = 0;
+#endif
+}
+
+// Once a frame: the newest frame of recorded samples to the TSC. Older ones
+// are dropped so the input never lags; with nothing new the last frame stays.
+void feed_host_mic(HostMic& mic) {
+    if (!mic) return;
+    int16_t* buf = mic.pending.data();
+    const int cap = static_cast<int>(mic.pending.size());
+    for (;;) {
+#if defined(NDS_HAVE_SDL3)
+        const int got = SDL_GetAudioStreamData(mic.stream, buf,
+                                               cap * int(sizeof(int16_t)));
+#else
+        const int got = static_cast<int>(SDL_DequeueAudio(
+            mic.device, buf, static_cast<Uint32>(cap * sizeof(int16_t))));
+#endif
+        if (got <= 0) break;
+        const int n = got / int(sizeof(int16_t));
+        mic.frame_len = std::min(n, kMicFrameSamples);
+        if (n < cap) {
+            if (n > kMicFrameSamples)
+                std::memmove(buf, buf + n - kMicFrameSamples,
+                             sizeof(int16_t) * kMicFrameSamples);
+            break;
+        }
+    }
+    if (mic.frame_len > 0) nds_mic_input_frame(buf, mic.frame_len);
+}
+
 void discard_spu_output() {
     std::array<int16_t, 2048> samples{};
     while (nds_spu_read_output(samples.data(), 1024) != 0) {}
@@ -3118,11 +3199,20 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     NdsAudioDevice audio = open_audio_device(audio_queue, want);
     if (!audio)
         std::fprintf(stderr, "[sdl] audio unavailable: %s\n", SDL_GetError());
+    HostMic host_mic;
+    if (options.host_microphone) {
+        if (open_host_mic(host_mic))
+            std::fprintf(stderr, "[sdl] microphone: host recording device\n");
+        else
+            std::fprintf(stderr, "[sdl] microphone unavailable: %s\n",
+                         SDL_GetError());
+    }
 
     std::fprintf(stderr,
         "[sdl] controls: gamepad=Player 1 | bottom mouse=touch | "
         "arrows=D-pad | Z=A X=B | A=Y S=X | Q=L W=R | "
         "Enter=Start Backspace=Select | hold End=close the lid | "
+        "hold M=blow into the mic | "
         "Esc=settings%s\n",
         options.tab_turbo ? " | hold Tab=turbo" : "");
     if (options.relative_mouse_touch) {
@@ -4161,6 +4251,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                     // Consumed by the MPH-specific keyboard/mouse layer.
                 } else if (scancode == SDL_SCANCODE_END) {
                     nds_set_lid_closed(true);
+                } else if (scancode == SDL_SCANCODE_M) {
+                    nds_mic_set_blow(true);   // held: blowing into the mic
                 } else if (options.tab_turbo &&
                            scancode == SDL_SCANCODE_TAB) {
                     turbo_pressed = true;
@@ -4182,6 +4274,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                     // Consumed by the MPH-specific keyboard/mouse layer.
                 } else if (scancode == SDL_SCANCODE_END) {
                     nds_set_lid_closed(false);
+                } else if (scancode == SDL_SCANCODE_M) {
+                    nds_mic_set_blow(false);
                 } else if (options.tab_turbo &&
                            scancode == SDL_SCANCODE_TAB) {
                     turbo_pressed = false;
@@ -4993,6 +5087,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
                 audio, audio_queue, audio_started, audio_pace_floor,
                 audio_queue_error);
         }
+        feed_host_mic(host_mic);
         const uint64_t frame_drain_ticks =
             SDL_GetPerformanceCounter() - phase2;
         phase_drain_ticks += frame_drain_ticks;
@@ -5184,6 +5279,7 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& initial_options) {
     // report failure on every clean run.
     const bool audio_opened = static_cast<bool>(audio);
     close_audio(audio);
+    close_host_mic(host_mic);
     NdsGpu2dHdCaptureStats hd_capture{};
     nds_gpu2d_hd_capture_stats(&hd_capture);
     if (hd_capture.frames) {
